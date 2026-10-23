@@ -252,3 +252,45 @@ def v5_premarket():
             'intraday_win_probability':None,
             'note':'美股加權漲跌僅是方向性描述，未經台股隔日樣本外驗證；美股交易日與台股交易日不一定一致。',
             'schedule':'此端點在使用者查詢時即時計算；尚未設定08:45定時任務。'}
+
+# v6.1: database-backed daily batch scanner. v5 endpoints are unchanged.
+from db import configured as database_configured, connect as database_connect
+
+@app.get('/api/v6/status')
+def v6_status():
+    if not database_configured():
+        return {'configured':False,'status':'database_not_configured','message':'尚未設定 DATABASE_URL；v5 功能仍可使用'}
+    try:
+        with database_connect() as conn:
+            universe=conn.execute('select count(*) as n from stock_universe where active=true').fetchone()['n']
+            covered=conn.execute('select count(distinct symbol) as n from daily_bars').fetchone()['n']
+            run=conn.execute('select id,started_at,finished_at,universe_count,eligible_count,failed_count,latest_trade_date,status,notes from scan_runs order by id desc limit 1').fetchone()
+        def serialize(x):
+            return {k:(v.isoformat() if hasattr(v,'isoformat') else v) for k,v in x.items()} if x else None
+        return {'configured':True,'status':'ok','universe_count':universe,'symbols_with_history':covered,
+                'coverage_pct':round(100*covered/universe,2) if universe else 0,'latest_run':serialize(run),
+                'note':'資料覆蓋率不代表當日資料新鮮度；請同時確認 latest_trade_date 與 eligible_count。'}
+    except Exception:
+        raise HTTPException(503,'資料庫連線或資料表初始化失敗，請檢查 DATABASE_URL 和 SQL schema；詳細原因見伺服器 Logs')
+
+@app.get('/api/v6/scan')
+def v6_scan(limit:int=Query(5,ge=1,le=100)):
+    if not database_configured():raise HTTPException(503,'尚未設定 DATABASE_URL')
+    try:
+        with database_connect() as conn:
+            run=conn.execute('select * from scan_runs order by id desc limit 1').fetchone()
+            if not run:raise HTTPException(404,'尚無掃描紀錄，請先執行 GitHub Actions')
+            rows=conn.execute('''select r.symbol,u.name,u.market,r.trade_date,r.score,r.close,r.volume_ratio,r.reasons
+                 from scan_results r join stock_universe u on u.symbol=r.symbol
+                 where r.run_id=%s order by r.score desc,r.volume_ratio desc nulls last,r.symbol limit %s''',
+                 (run['id'],limit)).fetchall()
+        def ser(row):
+            return {k:(v.isoformat() if hasattr(v,'isoformat') else float(v) if isinstance(v, __import__('decimal').Decimal) else v) for k,v in row.items()}
+        return {'run':ser(run),'items':[ser(x) for x in rows],
+                'universe':'官方上市櫃名單；實際評分僅涵蓋已下載且通過品質檢查的股票',
+                'score_definition':'日線技術規則符合度，不是勝率或隔日漲跌機率',
+                'entry_price':None,'stop_price':None,'intraday_win_probability':None,
+                'warning':'調整後歷史價格不得直接作為委託價格；非盤中即時行情。'}
+    except HTTPException:raise
+    except Exception:
+        raise HTTPException(503,'無法讀取掃描結果；請檢查資料庫連線與掃描紀錄')
