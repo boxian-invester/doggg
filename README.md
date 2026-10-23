@@ -1,27 +1,35 @@
-# 台股智研 AI v2 — 歷史行情後端與部署
-本版保留原先八個 DEMO 頁籤，另在頁面底部加入真實**歷史日線**行情資料中心。非即時報價，未產生可驗證的勝率或當沖訊號。
+# 台股智研 AI v3
 
-## 本機執行（Python 3.11+）
+v3 改用圖表及表格呈現既有 FastAPI 歷史行情資料，包含美股行情卡、台股固定 10 檔觀察清單、個股 K 線 / 成交量 / KD / MACD。其餘五項研究模組仍為清楚標記的待開發功能。
+
+## Mac 本機執行
+
 ```bash
-python -m venv .venv
+cd tsi-v3
+python3 -m venv .venv
 source .venv/bin/activate
-# Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
-開啟 http://127.0.0.1:8000 ，API 文件在 http://127.0.0.1:8000/docs 。
 
-## 部署到 Render
-1. 解壓縮，將所有檔案（含 Dockerfile、render.yaml、static 資料夾）推送到 GitHub Repository 根目錄。
-2. 登入 Render，選 New → Blueprint，連接 GitHub Repository，依 render.yaml 部署；也可建立 Docker Web Service。
-3. 部署成功後開啟 Render 提供的網址；檢查 /api/health 回傳 status: ok。
+瀏覽 http://localhost:8000 。
+
+## 更新現有 Render 網站
+
+1. 解壓縮 `taiwan-stock-intelligence-v3.zip`。
+2. 打開解壓縮資料夾，把 `main.py`、`requirements.txt`、`Dockerfile`、`render.yaml`、`static` 資料夾及其他專案檔案上傳至原 GitHub repository，覆蓋同名檔案。
+3. 確保 GitHub 上存在 `static/index.html`，且 `Dockerfile` 在 repository 根目錄。
+4. Commit changes，然後於 Render 選擇 Manual Deploy → Deploy latest commit（如未自動部署）。
+5. 開啟既有網址 https://doggg.onrender.com ，按 Cmd+Shift+R 強制更新快取。
 
 ## API
-- /api/health：服務狀態
-- /api/us-market：美股指數與 ADR 歷史日線
-- /api/watchlist：固定 10 檔台股觀察清單（非全市場掃描）
-- /api/stock/2330：台股歷史日線、KD、MACD、RSI、均線、量比
 
-資料來自 yfinance 非官方 Yahoo Finance 介面，可能延遲、缺漏或受限流；商業使用須確認授權。上市 .TW，上櫃 .TWO。八大原型頁籤仍是模擬資料。
+- `/api/health`
+- `/api/us-market`
+- `/api/watchlist`
+- `/api/stock/2330?period=1y`
+- `/docs`
 
-尚未實作：經驗證的隔日漲跌機率、當沖勝率、盤中即時報價、全市場掃描、正式回測、新聞串流、08:45 自動排程、帳戶與雲端同步。不得將示範值用於真實下單。
+## 注意
+
+行情來自 yfinance 非官方介面，可能延遲、缺漏、調整或有誤。圖表使用 auto_adjust=True 的調整後歷史日線，並非即時委託價格。美股隔日預測機率、當沖勝率、新聞與投資組合分析尚未完成，不提供假數字。若要公開營運或商業使用，須另行評估資料來源授權、穩定性及隱私安全。

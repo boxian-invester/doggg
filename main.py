@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title='台股智研 API', version='2.0.0')
+app = FastAPI(title='台股智研 API', version='3.0.0')
 BASE = Path(__file__).resolve().parent
 app.mount('/static', StaticFiles(directory=BASE/'static'), name='static')
 CACHE = {}
