@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from backtest import STRATEGIES, simulate
 
-app = FastAPI(title='台股智研 API', version='4.0.0')
+app = FastAPI(title='台股智研 API', version='5.0.0')
 BASE = Path(__file__).resolve().parent
 app.mount('/static', StaticFiles(directory=BASE/'static'), name='static')
 CACHE = {}
@@ -175,3 +175,80 @@ def opportunities():
       'universe':'固定 10 檔觀察清單；非全台股掃描',
       'score_definition':'規則符合度 0–100 分，不是勝率或上漲機率',
       'note':'日線資料，非當沖訊號；不提供無依據的進場/停損/目標價。'}
+
+
+# v5: bounded watch-universe research. Daily closes are not intraday quotes.
+from zoneinfo import ZoneInfo
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import timedelta
+
+SCAN_CACHE = {'time':0, 'data':None}
+SCAN_UNIVERSE = {**WATCH, '2603':'長榮', '2881':'富邦金', '2882':'國泰金', '3711':'日月光投控', '2308':'台達電', '2382':'廣達', '2357':'華碩', '2379':'瑞昱', '3231':'緯創', '6669':'緯穎'}
+
+def scan_one(pair):
+    symbol, name = pair
+    df, ticker = fetch_tw(symbol, '6mo')
+    if len(df)<65: raise ValueError('有效日線不足 65 根')
+    m=summary(df)
+    score=0; reasons=[]
+    for condition, weight, label in [
+        (m['breakout_20d_volume_confirmed'], 35, '收盤突破前20日高點且量比≥1.5'),
+        (m['ma20'] is not None and m['close']>m['ma20'], 20, '收盤高於MA20'),
+        (m['ma60'] is not None and m['close']>m['ma60'], 15, '收盤高於MA60'),
+        (m['kd_k'] is not None and m['kd_d'] is not None and m['kd_k']>m['kd_d'], 10, 'K高於D'),
+        (m['macd_hist'] is not None and m['macd_hist']>0, 10, 'MACD柱體為正'),
+        (m['volume_ratio'] is not None and m['volume_ratio']>=1.5, 10, '量比≥1.5')]:
+        if condition: score+=weight; reasons.append(label)
+    # Adjusted OHLC data must not be presented as executable order prices.
+    return {'symbol':symbol,'name':name,'ticker':ticker,'score':score,'reasons':reasons,**m,
+            'entry_price':None,'stop_price':None,'target_price':None,'win_probability':None}
+
+@app.get('/api/v5/scan')
+def v5_scan(limit:int=Query(5,ge=1,le=20)):
+    if SCAN_CACHE['data'] is not None and time.time()-SCAN_CACHE['time']<900:
+        cached=SCAN_CACHE['data'].copy()
+        cached['items']=cached['items'][:limit]
+        return cached
+    items=[]; errors=[]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        jobs={pool.submit(scan_one,pair):pair[0] for pair in SCAN_UNIVERSE.items()}
+        for future in as_completed(jobs):
+            try: items.append(future.result())
+            except Exception as e: errors.append({'symbol':jobs[future],'error':str(e)[:160]})
+    items.sort(key=lambda x:(-x['score'],-(x['volume_ratio'] or 0),x['symbol']))
+    result={'items':items, 'scanned':len(SCAN_UNIVERSE), 'succeeded':len(items),
+            'errors':errors,'universe':'固定20檔研究清單，並非台灣全市場掃描',
+            'score_definition':'規則符合度（0–100分），不是預測勝率',
+            'quote_status':'調整後歷史日線；非盤中即時；不能直接當委託價格',
+            'generated_at_taipei':datetime.now(ZoneInfo('Asia/Taipei')).isoformat(),
+            'limitations':['僅20檔固定清單','非即時當沖篩選','尚無樣本外隔日漲跌機率模型','部分行情可能延遲或缺漏']}
+    SCAN_CACHE.update(time=time.time(),data=result)
+    return {**result,'items':items[:limit]}
+
+@app.get('/api/v5/premarket')
+def v5_premarket():
+    now=datetime.now(ZoneInfo('Asia/Taipei'))
+    us=[]; failures=[]
+    for name,ticker in US.items():
+        try:
+            df=history(ticker,'1mo')
+            if len(df)<2: raise ValueError('歷史資料不足')
+            m=summary(df)
+            us.append({'name':name,'ticker':ticker,'date':m['date'],'close':m['close'],'change_pct':m['change_pct']})
+        except Exception as e:failures.append({'name':name,'error':str(e)[:100]})
+    lookup={x['ticker']:x for x in us}
+    # This is a descriptive score only, not a probability forecast.
+    inputs=[('^GSPC',1),('^IXIC',2),('^SOX',3),('TSM',2)]
+    available=[(lookup[t]['change_pct'],weight) for t,weight in inputs if t in lookup and lookup[t]['change_pct'] is not None]
+    weighted=sum(v*w for v,w in available)/sum(w for _,w in available) if available else None
+    if weighted is None: sentiment='資料不足'
+    elif weighted>0.7: sentiment='美股偏強（描述性）'
+    elif weighted< -0.7: sentiment='美股偏弱（描述性）'
+    else: sentiment='美股訊號混合／中性'
+    dates=[x['date'] for x in us]
+    return {'generated_at_taipei':now.isoformat(),'us_last_dates':sorted(set(dates)),
+            'us':us,'errors':failures,'weighted_us_daily_change_pct':num(weighted),
+            'market_read':sentiment,'taiwan_up_probability':None,'taiwan_down_probability':None,
+            'intraday_win_probability':None,
+            'note':'美股加權漲跌僅是方向性描述，未經台股隔日樣本外驗證；美股交易日與台股交易日不一定一致。',
+            'schedule':'此端點在使用者查詢時即時計算；尚未設定08:45定時任務。'}

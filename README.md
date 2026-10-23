@@ -1,33 +1,41 @@
-# 台股智研 AI v4
+# 台股智研 AI v5 — 有限股票掃描與美股盤前觀測
 
-在 v3 基礎上新增可重現的歷史日線回測引擎，以及固定 10 檔股票的規則評分 API。沿用 FastAPI / Docker / Render 部署方式。
+本版本在 v4 上新增：
 
-## 部署
+- `/api/v5/scan?limit=5`：固定 20 檔觀察股票的日線規則評分，並顯示量比、KD、MACD 等理由。**不是全市場掃描，也不是勝率。**
+- `/api/v5/premarket`：讀取美股指數、費城半導體、台積電 ADR 的最近日線，提供描述性加權漲跌觀測；**沒有台股隔日漲跌機率模型。**
+- 首頁第 1、2、3 區加入新資料視圖。其他 v4 功能保留。
 
-1. 解壓縮 ZIP，將**資料夾內**所有檔案與 `static` 資料夾上傳原 GitHub Repository 根目錄，覆蓋同名檔案。
-2. Render → 原 Web Service → Manual Deploy → Deploy latest commit。
-3. 打開 `https://doggg.onrender.com`，切到「交易策略回測」。
-4. 測試 `/api/health`、`/api/backtest/2330?strategy=ma_cross&period=5y`、`/api/opportunities`。
+## 部署 Render
 
-## 回測定義
+1. 解壓縮後，把檔案和 `static` 資料夾的**內容**上傳至原本 GitHub repository 的根目錄（不要上傳 ZIP 本身），覆蓋同名檔案。
+2. 確認 GitHub 根目錄有 `Dockerfile`、`main.py`、`backtest.py`、`requirements.txt`、`render.yaml`，且 `static/index.html` 存在。
+3. Render → 原 Web Service → Manual Deploy → Deploy latest commit。
+4. 測試 `/api/health`、`/api/v5/premarket`、`/api/v5/scan?limit=5`。
+5. 網站首頁第 1、2、3 個功能區點擊 v5 更新按鈕。
 
-- 支援 `ma_cross`、`kd_cross`、`rsi_reversion`、`macd_cross`、`volume_breakout`。
-- 每日收盤後計算訊號，下一個交易日**開盤**成交，避免同日收盤價前視偏差。
-- 僅做多；資金全倉、整股、不加槓桿。交易成本預設：手續費 14.25 bps/邊、賣出交易稅 30 bps、滑價 5 bps/邊，**僅為可調示例假設**，非個人實際費率；ETF 等商品稅制不同。
-- 70/30 時間切分；測試區間單獨初始化資金。沒有用測試資料選參數；但策略規則本身並非經過全面樣本外驗證。
-- 使用 yfinance 調整後歷史日線；不模擬漲跌停無法成交、停牌、真實逐筆撮合、實際稅務細節；分紅調整與真實交易可有差異。
-- 歷史勝率只計**已平倉**交易，未平倉部位計入淨值。交易筆數太少時無法推論未來勝率。
-- `/api/opportunities` 是固定觀察清單 10 檔的規則分數，**不是**全市場掃描，也**不是**預測勝率或當沖訊號。
+## 本機執行
 
-## 本機測試
+Python 3.11+：
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload
+uvicorn main:app --reload --port 8000
 ```
 
-打開 http://localhost:8000
+瀏覽 `http://localhost:8000`。
 
-## 尚未實作
+## 重要限制
 
-台股全市場掃描、隔日漲跌機率模型、盤前 08:45 自動排程、授權盤中分鐘資料與當沖回測、新聞模型、個人持股匯入。不要將本版本的歷史回測數字當成投資保證。
+- Yahoo Finance / yfinance 為非官方資料來源，可能限流、延遲、停用或回傳錯誤；上櫃股票由 `.TWO` 備援。
+- `auto_adjust=True` 使用調整後價格，**不能直接當作實際下單價位**。
+- v5 掃描固定 20 檔，採 4 執行緒、15 分鐘快取；Render 免費方案可能休眠，第一次請求較慢或逾時。
+- v5 **沒有**排程自動產生 08:45 報告、盤中報價、全市場掃描、勝率預測或可執行的當沖進出場價。
+- v4 歷史回測是研究性實作，須進一步驗證企業行動、滑價、漲跌停與樣本外可靠性。
+- API 端點公開，勿在公開網站輸入或保存真實個人帳戶、交易憑證或敏感資料。
+
+## 後續工程
+
+合法全市場資料源、持久資料庫、排程任務、時間對齊的跨市場特徵、走勢預測的 walk-forward 樣本外驗證、流動性與風險控制，以及實際盤中行情授權。
