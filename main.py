@@ -12,8 +12,9 @@ import yfinance as yf
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from backtest import STRATEGIES, simulate
 
-app = FastAPI(title='台股智研 API', version='3.0.0')
+app = FastAPI(title='台股智研 API', version='4.0.0')
 BASE = Path(__file__).resolve().parent
 app.mount('/static', StaticFiles(directory=BASE/'static'), name='static')
 CACHE = {}
@@ -123,3 +124,54 @@ def watchlist():
     return {'items':ranked,'errors':[x for x in out if 'error' in x],
             'universe':'固定觀察清單（10 檔），不是全市場掃描',
             'note':'僅歷史日線訊號；非盤前勝率、非當沖進場建議。'}
+
+
+@app.get('/api/backtest/strategies')
+def strategies():
+    return {'strategies':STRATEGIES,'note':'收盤產生訊號、下一交易日開盤成交；不保證未來績效。'}
+
+@app.get('/api/backtest/{symbol}')
+def backtest(symbol:str, strategy:str=Query('ma_cross'), period:str=Query('5y',pattern='^(2y|5y)$'),
+             fee_bps:float=Query(14.25,ge=0,le=100),tax_bps:float=Query(30,ge=0,le=100),
+             slippage_bps:float=Query(5,ge=0,le=100)):
+    stock_ticker(symbol)
+    if strategy not in STRATEGIES: raise HTTPException(400,'策略不存在')
+    df,ticker=fetch_tw(symbol,period)
+    if len(df)<220: raise HTTPException(422,'有效歷史資料不足 220 根，無法回測')
+    enriched=enrich(df)
+    # Split chronologically, no randomized split. Indicators use earlier history as warmup.
+    cut=int(len(enriched)*0.7)
+    train=enriched.iloc[:cut].copy()
+    test=enriched.iloc[cut:].copy()
+    # Provide earlier history to compute prior-bar crossover on test's first day;
+    # simulation starts after split and never executes on split boundary based on training signals.
+    try:
+        train_result=simulate(train,strategy,fee_bps,tax_bps,slippage_bps)
+        test_result=simulate(test,strategy,fee_bps,tax_bps,slippage_bps)
+    except ValueError as e: raise HTTPException(422,str(e))
+    return {'symbol':symbol,'ticker':ticker,'strategy':strategy,'strategy_label':STRATEGIES[strategy],
+      'quote_status':'歷史日線，非即時；auto_adjust=True 調整後價格',
+      'execution':'當日收盤確認訊號，下一交易日開盤執行；多頭全倉、整股、不加槓桿',
+      'costs':{'fee_bps_each_side':fee_bps,'tax_bps_sell':tax_bps,'slippage_bps_each_side':slippage_bps},
+      'train':train_result,'out_of_sample':test_result,
+      'limitations':['訓練/測試為時間先後 70/30；沒有跨股票參數搜尋或最佳化','測試區間單獨初始化資金，未承接訓練區間持倉','未模擬漲跌停無法成交、流動性限制、除權息稅務細節','調整後價格不適合直接作為委託價格','勝率為歷史已平倉交易勝率，非隔日上漲機率']}
+
+@app.get('/api/opportunities')
+def opportunities():
+    items=[]; errors=[]
+    for sym,name in WATCH.items():
+        try:
+            df,ticker=fetch_tw(sym,'1y'); m=summary(df)
+            score=0; reasons=[]
+            if m['breakout_20d_volume_confirmed']:score+=40;reasons.append('20 日高點放量突破')
+            if m['ma20'] is not None and m['close']>m['ma20']:score+=20;reasons.append('收盤站上 MA20')
+            if m['ma60'] is not None and m['close']>m['ma60']:score+=15;reasons.append('收盤站上 MA60')
+            if m['kd_k'] is not None and m['kd_d'] is not None and m['kd_k']>m['kd_d']:score+=10;reasons.append('KD K 高於 D')
+            if m['macd_hist'] is not None and m['macd_hist']>0:score+=10;reasons.append('MACD 柱體為正')
+            if m['volume_ratio'] is not None and m['volume_ratio']>=1.5:score+=5;reasons.append('量比達 1.5')
+            items.append({'symbol':sym,'name':name,'ticker':ticker,'score':score,'reasons':reasons,**m})
+        except Exception as e:errors.append({'symbol':sym,'error':str(e)[:100]})
+    return {'items':sorted(items,key=lambda x:x['score'],reverse=True)[:5], 'errors':errors,
+      'universe':'固定 10 檔觀察清單；非全台股掃描',
+      'score_definition':'規則符合度 0–100 分，不是勝率或上漲機率',
+      'note':'日線資料，非當沖訊號；不提供無依據的進場/停損/目標價。'}
