@@ -1,25 +1,21 @@
-
 name: Taiwan Stock Daily Batch
 
-'on':
+on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'all / universe / ingest / scan'
+        description: 'refresh=full market; all=bounded backfill; scan=ranking only'
         required: true
-        default: 'all'
+        default: refresh
         type: choice
-        options:
-          - all
-          - universe
-          - ingest
-          - scan
+        options: [refresh, all, universe, ingest, scan]
       batch_size:
-        description: 'Number of symbols to ingest per run'
+        description: 'Refresh chunk size / backfill symbol count'
         required: true
         default: '120'
+        type: string
   schedule:
-    - cron: '45 0 * * 1-5'
+    # Taiwan 15:40 Monday-Friday, 07:40 UTC. Scheduled starts may be delayed.
     - cron: '40 7 * * 1-5'
 
 permissions:
@@ -32,24 +28,33 @@ concurrency:
 jobs:
   batch:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 180
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RUN_MODE: ${{ inputs.mode || 'refresh' }}
       BATCH_SIZE: ${{ inputs.batch_size || '120' }}
-      RUN_MODE: ${{ inputs.mode || 'all' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Validate database secret
+        shell: bash
         run: |
           if [ -z "$DATABASE_URL" ]; then
             echo 'Missing DATABASE_URL GitHub Actions secret'
             exit 1
           fi
-      - name: Run incremental batch
-        run: python -m scripts.pipeline --mode "$RUN_MODE" --limit "$BATCH_SIZE" --workers 2 --period 1y
+      - name: Run daily batch
+        shell: bash
+        run: |
+          if [ "$RUN_MODE" = 'refresh' ]; then
+            python -m scripts.pipeline --mode refresh --limit "$BATCH_SIZE" --workers 3 --period 1mo
+          else
+            python -m scripts.pipeline --mode "$RUN_MODE" --limit "$BATCH_SIZE" --workers 2 --period 1y
+          fi
