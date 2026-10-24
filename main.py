@@ -56,17 +56,13 @@ def num(x, digits=2):
     return round(float(x),digits) if pd.notna(x) and math.isfinite(float(x)) else None
 
 def enrich(df):
-    df = df.copy()
-
-    # 將 PostgreSQL 的 Decimal 統一轉成 float64
-    # 避免 KD、MACD、RSI 等技術指標計算發生型別錯誤
-    for column in ["open", "high", "low", "close", "volume"]:
-        if column in df.columns:
-            df[column] = pd.to_numeric(
-                df[column],
-                errors="coerce"
-            ).astype("float64")
-    d=df.copy()
+    d = df.copy()
+    # PostgreSQL NUMERIC values are returned as Decimal. Convert the OHLCV
+    # columns before any pandas arithmetic (including KD, RSI and MACD).
+    # Preserve the original DataFrame and all existing API behavior.
+    for column in ('Open', 'High', 'Low', 'Close', 'Volume'):
+        if column in d.columns:
+            d[column] = pd.to_numeric(d[column], errors='coerce').astype('float64')
     c=d.Close
     for n in (5,10,20,60,120): d[f'MA{n}']=c.rolling(n).mean()
     ema12=c.ewm(span=12,adjust=False).mean(); ema26=c.ewm(span=26,adjust=False).mean()
