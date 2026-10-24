@@ -1,12 +1,13 @@
+
 name: Taiwan Stock Daily Batch
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "all / universe / ingest / scan"
+        description: 'all / universe / ingest / scan'
         required: true
-        default: all
+        default: 'all'
         type: choice
         options:
           - all
@@ -14,15 +15,12 @@ on:
           - ingest
           - scan
       batch_size:
-        description: "Number of symbols to ingest per run"
+        description: 'Number of symbols to ingest per run'
         required: true
-        default: "120"
-        type: string
+        default: '120'
   schedule:
-    # Taipei 08:45, Monday to Friday (UTC+8)
-    - cron: "45 0 * * 1-5"
-    # Taipei 15:40, Monday to Friday (UTC+8)
-    - cron: "40 7 * * 1-5"
+    - cron: '45 0 * * 1-5'
+    - cron: '40 7 * * 1-5'
 
 permissions:
   contents: read
@@ -40,27 +38,18 @@ jobs:
       BATCH_SIZE: ${{ inputs.batch_size || '120' }}
       RUN_MODE: ${{ inputs.mode || 'all' }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          python-version: '3.11'
+          cache: 'pip'
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Validate database secret
-        shell: bash
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "Missing DATABASE_URL GitHub Actions secret"
+            echo 'Missing DATABASE_URL GitHub Actions secret'
             exit 1
           fi
       - name: Run incremental batch
-        shell: bash
-        run: |
-          python -m scripts.pipeline \
-            --mode "$RUN_MODE" \
-            --limit "$BATCH_SIZE" \
-            --workers 2 \
-            --period 1y
+        run: python -m scripts.pipeline --mode "$RUN_MODE" --limit "$BATCH_SIZE" --workers 2 --period 1y
