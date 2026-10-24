@@ -3,7 +3,7 @@
 Run: python -m scripts.pipeline --mode all --limit 120 --workers 2 --period 1y
 
 Ingestion prioritizes missing symbols, then the least recently refreshed symbols.
-One run processes at most --limit symbols; it does NOT refresh the entire market.
+Refresh mode walks the entire active universe in bounded chunks.
 Signals are heuristic rankings, NOT probabilities or validated day-trading returns.
 """
 import argparse
@@ -155,6 +155,48 @@ def ingest(limit, offset, period, workers):
     return succeeded
 
 
+
+def refresh_all(chunk_size=120, workers=3, period='1mo'):
+    """Refresh all active symbols, not only the oldest 120; commit per symbol."""
+    with connect() as conn:
+        symbols = conn.execute('SELECT symbol, market FROM stock_universe WHERE active=true ORDER BY symbol').fetchall()
+    if not symbols:
+        raise RuntimeError('Stock universe empty; run --mode universe first')
+    success, failed = 0, []
+    LOG.info('Refreshing %d symbols in chunks of %d', len(symbols), chunk_size)
+    for start in range(0, len(symbols), chunk_size):
+        chunk = symbols[start:start + chunk_size]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(download_one, item, period): item['symbol'] for item in chunk}
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    _, rows = future.result()
+                    with connect() as conn:
+                        with conn.cursor() as cur:
+                            cur.executemany('''INSERT INTO daily_bars
+                                (symbol, trade_date, open, high, low, close, volume, source, adjusted)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                ON CONFLICT(symbol,trade_date) DO UPDATE SET
+                                open=excluded.open, high=excluded.high, low=excluded.low,
+                                close=excluded.close, volume=excluded.volume,
+                                source=excluded.source, adjusted=excluded.adjusted,
+                                loaded_at=now()''', rows)
+                    success += 1
+                except Exception as exc:
+                    failed.append((symbol, str(exc)[:180]))
+                    LOG.warning('Refresh failed %s: %s', symbol, exc)
+        LOG.info('Refresh progress %d/%d, succeeded=%d, failed=%d',
+                 min(start + len(chunk), len(symbols)), len(symbols), success, len(failed))
+    LOG.info('Refresh finished: success=%d/%d failures=%s', success, len(symbols), failed[:30])
+    if success == 0:
+        raise RuntimeError('All refresh requests failed')
+    scan()
+    if failed:
+        raise RuntimeError('Partial refresh: %d/%d failed; first symbols: %s' %
+                           (len(failed), len(symbols), [s for s, _ in failed[:20]]))
+    return success
+
 def _float(value):
     if value is None:
         return None
@@ -254,15 +296,18 @@ def scan():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['all', 'universe', 'ingest', 'scan'], default='all')
+    parser.add_argument('--mode', choices=['all', 'universe', 'ingest', 'scan', 'refresh'], default='all')
     parser.add_argument('--limit', type=int, default=int(os.getenv('BATCH_SIZE', '60')))
     parser.add_argument('--offset', type=int, default=0)
-    parser.add_argument('--period', choices=['3mo', '6mo', '1y', '2y'], default='1y')
+    parser.add_argument('--period', choices=['5d', '1mo', '3mo', '6mo', '1y', '2y'], default='1y')
     parser.add_argument('--workers', type=int, default=2)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     if args.limit < 1 or args.offset < 0:
         parser.error('--limit must be positive and --offset nonnegative')
+    if args.mode == 'refresh':
+        refresh_all(args.limit, max(1, min(args.workers, 4)), args.period)
+        return
     if args.mode in ('all', 'universe'):
         fetch_universe()
     if args.mode in ('all', 'ingest'):
