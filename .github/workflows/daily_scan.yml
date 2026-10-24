@@ -63,6 +63,6 @@ jobs:
             --limit "$BATCH_SIZE" \
             --workers 2 \
             --period 1y
- -z "$DATABASE_URL" ]; then echo 'Missing DATABASE_URL GitHub Actions secret'; exit 1; fi
+Missing DATABASE_URL GitHub Actions secret'; exit 1; fi
       - name: Run incremental batch
         run: python -m scripts.pipeline --mode "${{ inputs.mode || 'all' }}" --limit "$BATCH_SIZE" --workers 2 --period 1y
