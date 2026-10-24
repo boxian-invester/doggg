@@ -8,17 +8,15 @@ on:
         required: true
         default: 'all'
         type: choice
-        options:
-          - all
-          - universe
-          - ingest
-          - scan
+        options: [all, universe, ingest, scan]
       batch_size:
         description: 'Number of symbols to ingest per run'
         required: true
         default: '120'
   schedule:
+    # 08:45 Taipei, Monday-Friday (UTC+8, no DST)
     - cron: '45 0 * * 1-5'
+    # 15:40 Taipei, Monday-Friday, after market close
     - cron: '40 7 * * 1-5'
 
 permissions:
@@ -51,4 +49,9 @@ jobs:
             exit 1
           fi
       - name: Run incremental batch
-        run: python -m scripts.pipeline --mode "$RUN_MODE" --limit "$BATCH_SIZE" --workers 2 --period 1y
+        run: |
+          python -m scripts.pipeline \
+            --mode "$RUN_MODE" \
+            --limit "$BATCH_SIZE" \
+            --workers 2 \
+            --period 1y
