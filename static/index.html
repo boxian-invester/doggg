@@ -20,4 +20,22 @@ async function premktV5(){text($('pmStatus'),'正在取得美股日線…');try{
 $('pmRun').onclick=premktV5;$('scanRun').onclick=()=>scanV5('scanOutput','scanStatus',20);$('opRun').onclick=()=>scanV5('opOutput','opStatus',5);
 $('btRun').onclick=runBacktest;
 $('query').onclick=loadStock;$('symbol').onkeydown=e=>{if(e.key==='Enter')loadStock()};$('period').onchange=()=>{if(active===3)loadStock()};$('refreshUs').onclick=loadUs;check();show(0);
-</script></body></html>
+</script>
+<section id="v63-premarket" style="margin:20px auto;max-width:1200px;padding:16px;border:1px solid #41516b;border-radius:12px;background:#172335;color:#eef4ff;font-family:system-ui,sans-serif">
+ <h2 style="margin:0 0 10px;font-size:20px">v6.3｜08:45 盤前研究快照</h2>
+ <p id="v63-meta">讀取 Supabase 盤前報告中…</p>
+ <div id="v63-candidates" style="overflow:auto"></div>
+ <p style="color:#b5c5db;font-size:13px">技術分數不是勝率；盤前無法確認開盤後訊號。調整後歷史行情不能直接作為下單價格。</p>
+</section>
+<script>
+(async()=>{const meta=document.getElementById('v63-meta'),out=document.getElementById('v63-candidates');
+const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+try{const r=await fetch('/api/v6/premarket',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);
+const d=await r.json();meta.textContent='產生時間：'+(d.generated_at||'—')+'｜行情截至：'+(d.as_of_trade_date||'—')+'｜隔日漲跌機率：尚未驗證';
+const rows=(d.items||[]).map(x=>'<tr>'+[x.symbol,x.name,x.score,x.reference_adjusted_close,x.entry_rule,x.stop_rule].map(y=>'<td style="padding:9px;border-bottom:1px solid #34435b;white-space:normal">'+esc(y)+'</td>').join('')+'</tr>').join('');
+out.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+['代號','名稱','技術分數','調整後參考收盤','條件式進場','條件式停損'].map(x=>'<th style="padding:9px;text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table>';
+if(!rows)meta.textContent+='｜無符合資料日期的候選股';
+}catch(e){meta.textContent='盤前報告尚未建立或暫時無法讀取；請先完成 SQL 建表及盤前 Workflow。';}
+})();
+</script>
+</body></html>
