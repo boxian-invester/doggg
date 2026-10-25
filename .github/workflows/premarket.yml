@@ -1,0 +1,33 @@
+name: Taiwan Stock Premarket Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 08:45 Taipei Monday-Friday = 00:45 UTC; GitHub cron may be delayed.
+    - cron: '45 0 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: taiwan-stock-premarket
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Generate premarket snapshot
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo 'Missing DATABASE_URL secret'; exit 1; fi
+          python -m scripts.premarket
