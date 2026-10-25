@@ -56,13 +56,7 @@ def num(x, digits=2):
     return round(float(x),digits) if pd.notna(x) and math.isfinite(float(x)) else None
 
 def enrich(df):
-    d = df.copy()
-    # PostgreSQL NUMERIC values are returned as Decimal. Convert the OHLCV
-    # columns before any pandas arithmetic (including KD, RSI and MACD).
-    # Preserve the original DataFrame and all existing API behavior.
-    for column in ('Open', 'High', 'Low', 'Close', 'Volume'):
-        if column in d.columns:
-            d[column] = pd.to_numeric(d[column], errors='coerce').astype('float64')
+    d=df.copy()
     c=d.Close
     for n in (5,10,20,60,120): d[f'MA{n}']=c.rolling(n).mean()
     ema12=c.ewm(span=12,adjust=False).mean(); ema26=c.ewm(span=26,adjust=False).mean()
@@ -300,3 +294,19 @@ def v6_scan(limit:int=Query(5,ge=1,le=100)):
     except HTTPException:raise
     except Exception:
         raise HTTPException(503,'無法讀取掃描結果；請檢查資料庫連線與掃描紀錄')
+
+# v6.3 additive endpoint; all v5/v6.1 endpoints remain unchanged.
+@app.get('/api/v6/premarket')
+def v63_premarket():
+    if not database_configured():
+        raise HTTPException(503,'尚未設定 DATABASE_URL')
+    try:
+        with database_connect() as conn:
+            row=conn.execute('SELECT report FROM premarket_reports ORDER BY report_date DESC LIMIT 1').fetchone()
+        if not row:
+            raise HTTPException(404,'尚未產生盤前報告，請執行 Taiwan Stock Premarket Report')
+        return row['report']
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503,'盤前報告暫時無法讀取；請確認已執行 sql/002_premarket.sql')
