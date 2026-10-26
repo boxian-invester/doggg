@@ -19,7 +19,12 @@ main>section,main>.panel{min-width:0;max-width:100%}
 .v63-rule-label{display:block;color:#95abc6;font-size:12px;margin-bottom:4px}
 @media(max-width:900px){main{width:100%;margin-left:0;padding:16px}#v63-premarket{padding:14px!important}}
 </style></head><body><aside><div class="brand">台股<span>智研 AI</span><small>TAIWAN STOCK INTELLIGENCE · V5</small></div><div id="nav"></div></aside><main><header class="top"><div><h1 id="pageTitle">美股與隔日台股觀察</h1><div class="muted">真實歷史日線 API · 非即時行情 · 僅供研究</div></div><span class="chip" id="server">檢查伺服器中…</span></header><div class="banner">⚠ 本站不是即時交易系統。歷史資料可能延遲、調整或錯誤；尚未驗證的勝率、隔日預測及當沖訊號一律不顯示。請勿直接依此下單。</div>
-<section id="section0"><div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel"><h2>隔日台股漲跌機率</h2><div class="placeholder">尚未建立可驗證的預測模型。未來將加入美股收盤、費半、VIX、台積電 ADR、匯率與台股歷史資料，並公布回測期間、樣本數及樣本外命中率。</div></div><div class="panel"><div class="row"><h2>v5 美股盤前觀測（非機率預測）</h2><button id="pmRun">更新美股盤前摘要</button></div><div id="pmStatus" class="status">按更新以取得美股最近一個交易日資料。</div><div id="pmOutput"></div></div></section>
+<section id="section0"><div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel" id="v69-market-panel"><div class="row"><h2>AI 台股大盤預測｜歷史研究</h2><span class="chip">研究測試中</span></div>
+<p class="muted">歷史回測不等於明日預測。本區從 Supabase 讀取已保存的研究結果；正式盤前預測尚未啟用。</p>
+<div id="v69-model-status" class="status">正在讀取模型研究結果…</div>
+<div id="v69-model-metrics" class="grid"></div>
+<p id="v69-model-note" class="muted"></p>
+<button id="v69-model-refresh" type="button">重新整理研究結果</button></div><div class="panel"><div class="row"><h2>v5 美股盤前觀測（非機率預測）</h2><button id="pmRun">更新美股盤前摘要</button></div><div id="pmStatus" class="status">按更新以取得美股最近一個交易日資料。</div><div id="pmOutput"></div></div></section>
 <section id="section1" class="hidden"><div class="panel"><h2>盤前當沖候選觀察</h2><p class="muted">目前以固定 10 檔股票的歷史日線排序，非全市場掃描，也不是當日盤中買賣建議。</p><div id="watchA" class="status">載入中…</div></div><div class="panel"><h2>當沖進場、停損與勝率</h2><div class="placeholder">尚未連接授權盤中行情與歷史分鐘 K 線，因此不產生假設的當沖進場價、停損價或勝率。需在盤前建立條件，開盤後確認量價訊號。</div></div><div class="panel"><div class="row"><h2>v5 研究清單掃描（20檔，非即時當沖）</h2><button id="scanRun">掃描 20 檔</button></div><div id="scanStatus" class="status">根據歷史日線排序，不提供未驗證勝率。</div><div id="scanOutput"></div></div></section>
 <section id="section2" class="hidden"><div class="panel"><h2>每日五大交易機會觀察</h2><p class="muted">僅按歷史日線突破與量比排列，並非高勝率交易推薦。</p><div id="watchB" class="status">載入中…</div></div><div class="panel"><div class="row"><h2>v5 規則評分前五名</h2><button id="opRun">更新前五名</button></div><div id="opStatus" class="status">評分不是勝率，不能作為當沖下單訊號。</div><div id="opOutput"></div></div></section>
 <section id="section3" class="hidden"><div class="panel"><div class="row"><div><h2>個股歷史技術分析</h2><div class="muted">輸入台股代號；圖表資料由後端 API 提供</div></div><div class="controls"><input id="symbol" value="2330" maxlength="6" inputmode="numeric" aria-label="股票代號"><select id="period"><option value="6mo">6 個月</option><option value="1y" selected>1 年</option><option value="2y">2 年</option><option value="5y">5 年</option></select><button id="query">查詢個股</button></div></div><div class="status" id="stockStatus"></div><div class="row"><h2 id="stockName">2330</h2><span class="chip" id="stockDate">等待資料</span></div><div class="grid" id="stockMetrics"></div></div><div class="panel"><h2>日線 K 線 · MA20 / MA60</h2><div class="chartwrap"><canvas class="chart" id="priceChart"></canvas></div><p class="muted">圖表使用已調整歷史價格；價格區間不應直接當作未調整的委託價。</p></div><div class="panel"><h2>成交量</h2><div class="chartwrap"><canvas class="chart smallchart" id="volumeChart"></canvas></div></div><div class="panel"><h2>KD 指標</h2><div class="chartwrap"><canvas class="chart smallchart" id="kdChart"></canvas></div></div><div class="panel"><h2>MACD 柱狀圖</h2><div class="chartwrap"><canvas class="chart smallchart" id="macdChart"></canvas></div></div><div class="panel"><h2>支撐、壓力與交易判斷</h2><div id="interpretation" class="placeholder">等待查詢…</div></div></section>
@@ -72,6 +77,46 @@ out.innerHTML='<div class="v63-cardgrid">'+items.map(x=>'<article class="v63-sto
 '<div class="v63-rule"><span class="v63-rule-label">條件式停損</span>'+esc(x.stop_rule)+'</div></article>').join('')+'</div>';
 if(!items.length)meta.textContent+='｜無符合資料日期的候選股';
 }catch(e){meta.textContent='盤前報告尚未建立或暫時無法讀取；請先完成 SQL 建表及盤前 Workflow。';}
+})();
+</script>
+
+<script>
+(function(){
+  const esc=v=>String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\x27':'&#39;'}[c]));
+  const pct=v=>typeof v==='number'&&Number.isFinite(v)?(v*100).toFixed(2)+'%':'—';
+  const metric=(title,value,sub)=>'<div class="metric"><div class="muted">'+esc(title)+'</div><div class="value">'+esc(value)+'</div><div class="muted">'+esc(sub)+'</div></div>';
+  async function load(){
+    const status=document.getElementById('v69-model-status');
+    const metrics=document.getElementById('v69-model-metrics');
+    const note=document.getElementById('v69-model-note');
+    status.textContent='讀取 Supabase 模型研究紀錄中…';
+    try{
+      const r=await fetch('/api/v6/market-model',{cache:'no-store'});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      const d=await r.json();
+      if(!d.report){
+        metrics.innerHTML='';
+        status.textContent='目前沒有已存入資料庫的相符研究紀錄';
+        note.textContent=d.note||'';
+        return;
+      }
+      const m=d.report;
+      metrics.innerHTML=[
+        metric('歷史樣本外方向準確率',pct(m.model_accuracy),'研究回測，非明日勝率'),
+        metric('同期基準準確率',pct(m.baseline_accuracy),'歷史上漲頻率'),
+        metric('Brier Score',m.model_brier==null?'—':Number(m.model_brier).toFixed(4),'越低越好'),
+        metric('樣本外交易日',m.test_samples??'—','模型：'+(m.model_version||'—'))
+      ].join('');
+      status.textContent='研究狀態：'+(m.status||'—')+'｜台股行情截至：'+(m.latest_twii_date||'—')+'｜研究紀錄：'+(m.created_at||'—');
+      note.textContent=d.note||'';
+    }catch(e){
+      metrics.innerHTML='';
+      status.textContent='模型研究資料讀取失敗：'+e.message;
+      note.textContent='不影響網站其他功能；請檢查 Supabase 連線及資料表。';
+    }
+  }
+  document.getElementById('v69-model-refresh').addEventListener('click',load);
+  load();
 })();
 </script>
 </body></html>
