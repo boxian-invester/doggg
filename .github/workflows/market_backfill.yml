@@ -1,0 +1,35 @@
+name: Taiwan Stock Market Index Backfill
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Historical years to backfill'
+        type: choice
+        required: true
+        default: '5'
+        options:
+          - '3'
+          - '5'
+permissions:
+  contents: read
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install 'pandas>=2.0,<3' 'yfinance>=0.2.50,<2' 'psycopg[binary]>=3.1,<4'
+      - name: Validate database secret
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Missing DATABASE_URL secret"
+            exit 1
+          fi
+      - name: Backfill market indexes
+        run: python -m scripts.market_backfill --years "${{ inputs.years || '5' }}"
