@@ -310,3 +310,43 @@ def v63_premarket():
         raise
     except Exception:
         raise HTTPException(503,'盤前報告暫時無法讀取；請確認已執行 sql/002_premarket.sql')
+
+
+# v6.9: read-only historical model research endpoint.
+@app.get('/api/v6/market-model')
+def v69_market_model():
+    if not database_configured():
+        raise HTTPException(503, '尚未設定 DATABASE_URL')
+    try:
+        with database_connect() as conn:
+            rows = conn.execute("""
+                SELECT model_version, created_at, latest_twii_date, last_us_date,
+                       training_samples, test_samples, model_accuracy,
+                       baseline_accuracy, model_brier, baseline_brier, status
+                FROM public.market_model_reports
+                WHERE model_version IN ('v6.8-premarket-logistic',
+                                        'v6.7-premarket-logistic',
+                                        'v6.6-premarket-logistic')
+                ORDER BY CASE model_version
+                  WHEN 'v6.8-premarket-logistic' THEN 0
+                  WHEN 'v6.7-premarket-logistic' THEN 1
+                  ELSE 2 END, created_at DESC
+                LIMIT 1
+            """).fetchall()
+        if not rows:
+            return {'status':'no_research_record', 'note':'目前只有 GitHub Actions 的 v6.7/v6.8 稽核日誌；資料庫尚無對應研究紀錄。請勿把日誌成績當成即時預測。',
+                    'daily_prediction':None}
+        r = rows[0]
+        def val(k):
+            v=r[k]
+            return v.isoformat() if hasattr(v,'isoformat') else float(v) if v is not None and k in ('model_accuracy','baseline_accuracy','model_brier','baseline_brier') else v
+        return {'status':'research_only', 'report':{k:val(k) for k in (
+            'model_version','created_at','latest_twii_date','last_us_date',
+            'training_samples','test_samples','model_accuracy',
+            'baseline_accuracy','model_brier','baseline_brier','status')},
+            'daily_prediction':None,
+            'note':'僅為歷史研究回測；不是當日盤前上漲機率。v6.8 稽核結果未自動存入資料庫。'}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, 'AI 大盤研究資料暫時無法讀取，請確認 market_model_reports 資料表')
