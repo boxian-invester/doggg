@@ -209,27 +209,39 @@ def volume_surge_score(df):
 
 
 def _score_institutions(rows, price_dates):
-    '''Only evaluate 10 complete sessions, ending on the stock's latest bar.'''
+    """Score only 10 verified institutional sessions, aligned to latest price bar.
+
+    Holiday bars from a price vendor must not be treated as trading days.
+    A missing institutional day is NOT silently filled with zero.
+    """
     by_date = {str(r['trade_date']): r for r in rows}
-    wanted = [str(x.date()) for x in price_dates[-10:]]
-    if len(wanted) < 10 or any(d not in by_date for d in wanted):
+    price_day_set = {str(x.date()) for x in price_dates}
+    latest_price_date = str(price_dates[-1].date())
+    if latest_price_date not in by_date:
+        return None  # No current institutional observation; never score stale data.
+    wanted = sorted((d for d in by_date if d <= latest_price_date), reverse=True)[:10]
+    if len(wanted) != 10 or any(d not in price_day_set for d in wanted):
         return None
+    wanted.reverse()
     records = [by_date[d] for d in wanted]
-    # Normalize by traded volume (shares), preventing large-cap size bias.
-    volumes = [max(1, int(r['volume'])) for r in records]
+    if any(r.get('volume') is None or int(r['volume']) <= 0 or
+           any(r.get(k) is None for k in ('foreign_net_shares', 'trust_net_shares', 'dealer_net_shares'))
+           for r in records):
+        return None
+    volumes = [int(r['volume']) for r in records]
     weights = {'foreign_net_shares': 0.4, 'trust_net_shares': 0.4, 'dealer_net_shares': 0.2}
     combined = [sum(float(r[k]) * w for k, w in weights.items()) / volumes[i]
                 for i, r in enumerate(records)]
     overall = sum(combined) / 10
     recent = sum(combined[-5:]) / 5
     positive_days = sum(x > 0 for x in combined)
-    # Signed score: magnitude 0..10, momentum 0..3, persistence 0..2.
     magnitude = max(-10, min(10, overall / 0.015 * 10))
     momentum = max(-3, min(3, (recent - overall) / 0.015 * 3))
     persistence = (positive_days - 5) / 5 * 2
     score = int(round(max(-15, min(15, magnitude + momentum + persistence))))
     return {'score': score, 'net_ratio': num(overall * 100, 3),
-            'positive_days': positive_days, 'latest_date': wanted[-1]}
+            'positive_days': positive_days, 'latest_date': wanted[-1],
+            'matched_trading_days': 10, 'date_alignment': 'institutional_sessions'}
 
 
 def _score_chip(row):
@@ -304,9 +316,27 @@ def load_v51_chips():
     return inst_by_symbol, chip_by_symbol, '；'.join(warnings) if warnings else None
 
 
-def scan_one(pair, inst_by_symbol=None, chip_by_symbol=None):
+def _official_session_dates(inst_by_symbol):
+    """Derive exchange-wide recent sessions only from broadly covered T86 dates.
+
+    A missing import day is not a market holiday: if coverage is sparse, do not
+    filter price bars. This is a guard, not a substitute for an official calendar.
+    """
+    from collections import Counter
+    counts = Counter(str(r['trade_date']) for rows in (inst_by_symbol or {}).values() for r in rows)
+    return {d for d, n in counts.items() if n >= 500}
+
+
+def scan_one(pair, inst_by_symbol=None, chip_by_symbol=None, official_dates=None):
     symbol, name = pair
     df, ticker = fetch_tw(symbol, '6mo')
+    # Remove vendor holiday bars only inside the reliable T86 coverage window.
+    # Do not drop earlier historical bars or any bar newer than T86's latest day.
+    if official_dates and len(official_dates) >= 10:
+        start, end = min(official_dates), max(official_dates)
+        keep = [(str(dt.date()) < start or str(dt.date()) > end or
+                 str(dt.date()) in official_dates) for dt in df.index]
+        df = df.loc[keep].copy()
     if len(df) < 65: raise ValueError('有效日線不足 65 根')
     m = summary(df)
     technical = 0; reasons = []
@@ -345,8 +375,9 @@ def v5_scan(limit: int = Query(5, ge=1, le=20)):
         return cached
     inst, chips, data_warning = load_v51_chips()
     items = []; errors = []
+    official_dates = _official_session_dates(inst)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        jobs = {pool.submit(scan_one, pair, inst, chips): pair[0] for pair in SCAN_UNIVERSE.items()}
+        jobs = {pool.submit(scan_one, pair, inst, chips, official_dates): pair[0] for pair in SCAN_UNIVERSE.items()}
         for future in as_completed(jobs):
             try: items.append(future.result())
             except Exception as e: errors.append({'symbol': jobs[future], 'error': str(e)[:160]})
@@ -356,7 +387,8 @@ def v5_scan(limit: int = Query(5, ge=1, le=20)):
               'score_definition': '技術100 + 爆量15 + 法人15 + CMoney主力20；依實際資料覆蓋率呈現可評分滿分與標準化分數，不是勝率',
               'data_warning': data_warning,
                'data_sources': {'institutional_symbols_loaded': len(inst),
-                                'cmoney_symbols_loaded': len(chips)},
+                                'cmoney_symbols_loaded': len(chips),
+                                 'official_session_dates': len(official_dates)},
               'quote_status': '調整後歷史日線；非盤中即時；不能直接當委託價格',
               'generated_at_taipei': datetime.now(ZoneInfo('Asia/Taipei')).isoformat(),
               'limitations': ['僅20檔固定清單', '非即時當沖篩選', '法人與CMoney資料須另外匯入',
