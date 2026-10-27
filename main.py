@@ -185,45 +185,158 @@ from datetime import timedelta
 SCAN_CACHE = {'time':0, 'data':None}
 SCAN_UNIVERSE = {**WATCH, '2603':'長榮', '2881':'富邦金', '2882':'國泰金', '3711':'日月光投控', '2308':'台達電', '2382':'廣達', '2357':'華碩', '2379':'瑞昱', '3231':'緯創', '6669':'緯穎'}
 
-def scan_one(pair):
+def volume_surge_score(df):
+    '''Compare latest volume against preceding N completed sessions (exclude latest).'''
+    v = df['Volume'].astype(float)
+    ratios = {}
+    points = []
+    for days in (5, 10, 20, 60):
+        baseline = v.shift(1).tail(days).mean() if len(v) >= days + 1 else float('nan')
+        ratio = float(v.iloc[-1] / baseline) if pd.notna(baseline) and baseline > 0 else None
+        ratios[str(days)] = num(ratio)
+        points.append(0 if ratio is None or ratio < 2 else 2 if ratio < 3 else 3 if ratio < 5 else 4)
+    raw = min(15, sum(points))
+    last = df.iloc[-1]
+    prev_close = float(df.Close.iloc[-2])
+    # Volume with a bearish candle / sharp selloff is not automatically bullish.
+    bearish = bool(last.Close < last.Open or (prev_close > 0 and last.Close / prev_close - 1 < -0.02))
+    upper_shadow = float(last.High - max(last.Close, last.Open))
+    candle_range = float(last.High - last.Low)
+    long_upper = bool(candle_range > 0 and upper_shadow / candle_range >= 0.45)
+    penalty = min(raw, 7) if (bearish or long_upper) and raw > 0 else 0
+    return {'score': raw - penalty, 'ratios': ratios, 'raw_score': raw,
+            'risk_penalty': penalty, 'risk_flag': '爆量賣壓／長上影線' if penalty else None}
+
+
+def _score_institutions(rows, price_dates):
+    '''Only evaluate 10 complete sessions, ending on the stock's latest bar.'''
+    by_date = {str(r['trade_date']): r for r in rows}
+    wanted = [str(x.date()) for x in price_dates[-10:]]
+    if len(wanted) < 10 or any(d not in by_date for d in wanted):
+        return None
+    records = [by_date[d] for d in wanted]
+    # Normalize by traded volume (shares), preventing large-cap size bias.
+    volumes = [max(1, int(r['volume'])) for r in records]
+    weights = {'foreign_net_shares': 0.4, 'trust_net_shares': 0.4, 'dealer_net_shares': 0.2}
+    combined = [sum(float(r[k]) * w for k, w in weights.items()) / volumes[i]
+                for i, r in enumerate(records)]
+    overall = sum(combined) / 10
+    recent = sum(combined[-5:]) / 5
+    positive_days = sum(x > 0 for x in combined)
+    # Signed score: magnitude 0..10, momentum 0..3, persistence 0..2.
+    magnitude = max(-10, min(10, overall / 0.015 * 10))
+    momentum = max(-3, min(3, (recent - overall) / 0.015 * 3))
+    persistence = (positive_days - 5) / 5 * 2
+    score = int(round(max(-15, min(15, magnitude + momentum + persistence))))
+    return {'score': score, 'net_ratio': num(overall * 100, 3),
+            'positive_days': positive_days, 'latest_date': wanted[-1]}
+
+
+def _score_chip(row):
+    '''CMoney-sourced values only; never derive a fake CMoney concentration.'''
+    if row is None or any(row.get(k) is None for k in ('main_net_shares', 'branch_count_diff', 'concentration_5d', 'concentration_20d')):
+        return None
+    net = float(row['main_net_shares'])
+    count = int(row['branch_count_diff'])
+    c5 = float(row['concentration_5d'])
+    c20 = float(row['concentration_20d'])
+    # Concentration units are percentage points (e.g. 3.5 means 3.5%).
+    s_net = 5 if net > 0 else -5 if net < 0 else 0
+    s_branch = (3 if count < 0 else -3 if count > 0 else 0) if net > 0 else (-3 if count < 0 else 0)
+    def tier(value, bands):
+        if value >= bands[2]: return 6
+        if value >= bands[1]: return 4
+        if value >= bands[0]: return 2
+        if value <= -bands[2]: return -6
+        if value <= -bands[1]: return -4
+        if value <= -bands[0]: return -2
+        return 0
+    s5 = tier(c5, (2, 5, 7))
+    s20 = tier(c20, (1, 3, 5))
+    return {'score': max(-20, min(20, s_net + s_branch + s5 + s20)),
+            'main_net_shares': int(net), 'branch_count_diff': count,
+            'concentration_5d': c5, 'concentration_20d': c20,
+            'latest_date': str(row['trade_date'])}
+
+
+def load_v51_chips():
+    '''Optional imported data. Absence of tables/data is reported, never scored as zero.'''
+    if not database_configured():
+        return {}, {}, '未設定資料庫，法人與CMoney主力資料暫不可用'
+    try:
+        with database_connect() as conn:
+            inst = conn.execute('''SELECT symbol, trade_date, foreign_net_shares, trust_net_shares,
+                dealer_net_shares, volume FROM public.v5_institution_daily
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '60 days' ORDER BY trade_date''').fetchall()
+            chips = conn.execute('''SELECT symbol, trade_date, main_net_shares, branch_count_diff,
+                concentration_5d, concentration_20d FROM public.v5_cmoney_chip_daily
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days' ORDER BY trade_date DESC''').fetchall()
+        inst_by_symbol = {}
+        for r in inst: inst_by_symbol.setdefault(r['symbol'], []).append(dict(r))
+        chip_by_symbol = {}
+        for r in chips: chip_by_symbol.setdefault(r['symbol'], []).append(dict(r))
+        return inst_by_symbol, chip_by_symbol, None
+    except Exception:
+        return {}, {}, '法人／CMoney資料表未建立或讀取失敗；請先執行附帶SQL，並確認已匯入授權資料'
+
+
+def scan_one(pair, inst_by_symbol=None, chip_by_symbol=None):
     symbol, name = pair
     df, ticker = fetch_tw(symbol, '6mo')
-    if len(df)<65: raise ValueError('有效日線不足 65 根')
-    m=summary(df)
-    score=0; reasons=[]
+    if len(df) < 65: raise ValueError('有效日線不足 65 根')
+    m = summary(df)
+    technical = 0; reasons = []
     for condition, weight, label in [
         (m['breakout_20d_volume_confirmed'], 35, '收盤突破前20日高點且量比≥1.5'),
-        (m['ma20'] is not None and m['close']>m['ma20'], 20, '收盤高於MA20'),
-        (m['ma60'] is not None and m['close']>m['ma60'], 15, '收盤高於MA60'),
-        (m['kd_k'] is not None and m['kd_d'] is not None and m['kd_k']>m['kd_d'], 10, 'K高於D'),
-        (m['macd_hist'] is not None and m['macd_hist']>0, 10, 'MACD柱體為正'),
-        (m['volume_ratio'] is not None and m['volume_ratio']>=1.5, 10, '量比≥1.5')]:
-        if condition: score+=weight; reasons.append(label)
-    # Adjusted OHLC data must not be presented as executable order prices.
-    return {'symbol':symbol,'name':name,'ticker':ticker,'score':score,'reasons':reasons,**m,
-            'entry_price':None,'stop_price':None,'target_price':None,'win_probability':None}
+        (m['ma20'] is not None and m['close'] > m['ma20'], 20, '收盤高於MA20'),
+        (m['ma60'] is not None and m['close'] > m['ma60'], 15, '收盤高於MA60'),
+        (m['kd_k'] is not None and m['kd_d'] is not None and m['kd_k'] > m['kd_d'], 10, 'K高於D'),
+        (m['macd_hist'] is not None and m['macd_hist'] > 0, 10, 'MACD柱體為正'),
+        (m['volume_ratio'] is not None and m['volume_ratio'] >= 1.5, 10, '量比≥1.5')]:
+        if condition: technical += weight; reasons.append(label)
+    surge = volume_surge_score(df)
+    if surge['raw_score'] > 0: reasons.append('爆量評分+' + str(surge['score']) + ('（含風險扣分）' if surge['risk_penalty'] else ''))
+    inst = _score_institutions((inst_by_symbol or {}).get(symbol, []), df.index)
+    last_date = str(df.index[-1].date())
+    chip_rows = (chip_by_symbol or {}).get(symbol, [])
+    chip_row = next((r for r in chip_rows if str(r['trade_date']) == last_date), None)
+    chip = _score_chip(chip_row)
+    available_max = 115 + (15 if inst is not None else 0) + (20 if chip is not None else 0)
+    total = technical + surge['score'] + (inst['score'] if inst else 0) + (chip['score'] if chip else 0)
+    return {'symbol': symbol, 'name': name, 'ticker': ticker,
+            'score': total, 'technical_score': technical, 'volume_surge': surge,
+            'institutional': inst, 'cmoney_chip': chip,
+            'available_max_score': available_max,
+            'normalized_score': round(100 * total / available_max, 2),
+            'data_coverage': {'institutional': inst is not None, 'cmoney_chip': chip is not None},
+            'reasons': reasons, **m, 'entry_price': None, 'stop_price': None,
+            'target_price': None, 'win_probability': None}
+
 
 @app.get('/api/v5/scan')
-def v5_scan(limit:int=Query(5,ge=1,le=20)):
-    if SCAN_CACHE['data'] is not None and time.time()-SCAN_CACHE['time']<900:
-        cached=SCAN_CACHE['data'].copy()
-        cached['items']=cached['items'][:limit]
+def v5_scan(limit: int = Query(5, ge=1, le=20)):
+    if SCAN_CACHE['data'] is not None and time.time() - SCAN_CACHE['time'] < 900:
+        cached = SCAN_CACHE['data'].copy()
+        cached['items'] = cached['items'][:limit]
         return cached
-    items=[]; errors=[]
+    inst, chips, data_warning = load_v51_chips()
+    items = []; errors = []
     with ThreadPoolExecutor(max_workers=4) as pool:
-        jobs={pool.submit(scan_one,pair):pair[0] for pair in SCAN_UNIVERSE.items()}
+        jobs = {pool.submit(scan_one, pair, inst, chips): pair[0] for pair in SCAN_UNIVERSE.items()}
         for future in as_completed(jobs):
             try: items.append(future.result())
-            except Exception as e: errors.append({'symbol':jobs[future],'error':str(e)[:160]})
-    items.sort(key=lambda x:(-x['score'],-(x['volume_ratio'] or 0),x['symbol']))
-    result={'items':items, 'scanned':len(SCAN_UNIVERSE), 'succeeded':len(items),
-            'errors':errors,'universe':'固定20檔研究清單，並非台灣全市場掃描',
-            'score_definition':'規則符合度（0–100分），不是預測勝率',
-            'quote_status':'調整後歷史日線；非盤中即時；不能直接當委託價格',
-            'generated_at_taipei':datetime.now(ZoneInfo('Asia/Taipei')).isoformat(),
-            'limitations':['僅20檔固定清單','非即時當沖篩選','尚無樣本外隔日漲跌機率模型','部分行情可能延遲或缺漏']}
-    SCAN_CACHE.update(time=time.time(),data=result)
-    return {**result,'items':items[:limit]}
+            except Exception as e: errors.append({'symbol': jobs[future], 'error': str(e)[:160]})
+    items.sort(key=lambda x: (-x['normalized_score'], -x['score'], x['symbol']))
+    result = {'items': items, 'scanned': len(SCAN_UNIVERSE), 'succeeded': len(items),
+              'errors': errors, 'universe': '固定20檔研究清單，並非台灣全市場掃描',
+              'score_definition': '技術100 + 爆量15 + 法人15 + CMoney主力20；依實際資料覆蓋率呈現可評分滿分與標準化分數，不是勝率',
+              'data_warning': data_warning,
+              'quote_status': '調整後歷史日線；非盤中即時；不能直接當委託價格',
+              'generated_at_taipei': datetime.now(ZoneInfo('Asia/Taipei')).isoformat(),
+              'limitations': ['僅20檔固定清單', '非即時當沖篩選', '法人與CMoney資料須另外匯入',
+                              '不同資料覆蓋率下的標準化排名僅供參考', '部分行情可能延遲或缺漏']}
+    SCAN_CACHE.update(time=time.time(), data=result)
+    return {**result, 'items': items[:limit]}
 
 @app.get('/api/v5/premarket')
 def v5_premarket():
