@@ -260,24 +260,48 @@ def _score_chip(row):
 
 
 def load_v51_chips():
-    '''Optional imported data. Absence of tables/data is reported, never scored as zero.'''
+    # Read institutional and licensed CMoney data independently.
+
+    # A failure or missing permission in one source must not hide the other.
     if not database_configured():
-        return {}, {}, '未設定資料庫，法人與CMoney主力資料暫不可用'
+        return {}, {}, '未設定 DATABASE_URL；法人與 CMoney 資料暫不可用'
+
+    inst_by_symbol, chip_by_symbol, warnings = {}, {}, []
     try:
         with database_connect() as conn:
-            inst = conn.execute('''SELECT symbol, trade_date, foreign_net_shares, trust_net_shares,
-                dealer_net_shares, volume FROM public.v5_institution_daily
-                WHERE trade_date >= CURRENT_DATE - INTERVAL '60 days' ORDER BY trade_date''').fetchall()
-            chips = conn.execute('''SELECT symbol, trade_date, main_net_shares, branch_count_diff,
-                concentration_5d, concentration_20d FROM public.v5_cmoney_chip_daily
-                WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days' ORDER BY trade_date DESC''').fetchall()
-        inst_by_symbol = {}
-        for r in inst: inst_by_symbol.setdefault(r['symbol'], []).append(dict(r))
-        chip_by_symbol = {}
-        for r in chips: chip_by_symbol.setdefault(r['symbol'], []).append(dict(r))
-        return inst_by_symbol, chip_by_symbol, None
-    except Exception:
-        return {}, {}, '法人／CMoney資料表未建立或讀取失敗；請先執行附帶SQL，並確認已匯入授權資料'
+            rows = conn.execute('''SELECT symbol, trade_date, foreign_net_shares,
+                trust_net_shares, dealer_net_shares, volume
+                FROM public.v5_institution_daily
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '90 days'
+                ORDER BY symbol, trade_date''').fetchall()
+        for row in rows:
+            record = dict(row)
+            inst_by_symbol.setdefault(str(record['symbol']).strip(), []).append(record)
+        if not rows:
+            warnings.append('法人資料表目前沒有最近90日紀錄')
+    except Exception as exc:
+        warnings.append('法人資料讀取失敗：' + type(exc).__name__ + '（請檢查 Render DATABASE_URL、資料表與權限；詳細錯誤見伺服器日誌）')
+        import logging
+        logging.getLogger(__name__).exception('v5.3 institutional query failed')
+
+    try:
+        with database_connect() as conn:
+            rows = conn.execute('''SELECT symbol, trade_date, main_net_shares,
+                branch_count_diff, concentration_5d, concentration_20d
+                FROM public.v5_cmoney_chip_daily
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '10 days'
+                ORDER BY symbol, trade_date DESC''').fetchall()
+        for row in rows:
+            record = dict(row)
+            chip_by_symbol.setdefault(str(record['symbol']).strip(), []).append(record)
+        if not rows:
+            warnings.append('CMoney 主力尚無授權匯入資料')
+    except Exception as exc:
+        warnings.append('CMoney 主力資料讀取失敗：' + type(exc).__name__ + '（不影響法人評分）')
+        import logging
+        logging.getLogger(__name__).exception('v5.3 CMoney query failed')
+
+    return inst_by_symbol, chip_by_symbol, '；'.join(warnings) if warnings else None
 
 
 def scan_one(pair, inst_by_symbol=None, chip_by_symbol=None):
@@ -331,6 +355,8 @@ def v5_scan(limit: int = Query(5, ge=1, le=20)):
               'errors': errors, 'universe': '固定20檔研究清單，並非台灣全市場掃描',
               'score_definition': '技術100 + 爆量15 + 法人15 + CMoney主力20；依實際資料覆蓋率呈現可評分滿分與標準化分數，不是勝率',
               'data_warning': data_warning,
+               'data_sources': {'institutional_symbols_loaded': len(inst),
+                                'cmoney_symbols_loaded': len(chips)},
               'quote_status': '調整後歷史日線；非盤中即時；不能直接當委託價格',
               'generated_at_taipei': datetime.now(ZoneInfo('Asia/Taipei')).isoformat(),
               'limitations': ['僅20檔固定清單', '非即時當沖篩選', '法人與CMoney資料須另外匯入',
