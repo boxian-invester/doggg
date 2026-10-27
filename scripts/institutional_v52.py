@@ -22,15 +22,21 @@ def get_day(day):
     if payload.get('stat') != 'OK':
         return [], payload.get('stat','no data')
     fields=payload.get('fields') or []
-    def col(fragment):
-        matches=[i for i,field in enumerate(fields) if fragment in str(field)]
-        if len(matches)!=1: raise ValueError(f'Cannot uniquely match {fragment}: {fields}')
+    def col_exact(label):
+        # TWSE provides a total dealer column as well as separate proprietary/hedging columns.
+        # Substring matching would match all three and fail; use normalized exact labels.
+        def normalize(value):
+            return re.sub(r"\s+", "", str(value)).replace("（", "(").replace("）", ")")
+        wanted=normalize(label)
+        matches=[i for i,field in enumerate(fields) if normalize(field)==wanted]
+        if len(matches)!=1:
+            raise ValueError(f'Expected exactly one official column {label!r}; matches={matches}; fields={fields}')
         return matches[0]
     indices={
-        'symbol':col('證券代號'),
-        'foreign':col('外陸資買賣超股數(不含外資自營商)'),
-        'trust':col('投信買賣超股數'),
-        'dealer':col('自營商買賣超股數'),
+        'symbol':col_exact('證券代號'),
+        'foreign':col_exact('外陸資買賣超股數(不含外資自營商)'),
+        'trust':col_exact('投信買賣超股數'),
+        'dealer':col_exact('自營商買賣超股數'),
     }
     results=[]
     for row in payload.get('data') or []:
