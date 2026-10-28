@@ -1,0 +1,30 @@
+name: Daily TOP20 with aligned TWII
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 11 * * 1-5' # 19:30 Taiwan time (UTC+8)
+permissions:
+  contents: read
+jobs:
+  aligned-top20:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install 'pandas>=2.0,<3' 'yfinance>=0.2.50,<2' 'psycopg[binary]>=3.1,<4' 'psycopg2-binary>=2.9,<3'
+      - name: Update and verify Taiwan index
+        run: python scripts/update_twii_daily.py
+      - name: Run TOP20 only after index alignment
+        run: python scripts/top10_screen.py
+      - name: Upload TOP20 research artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: top20-aligned-output
+          path: top10_output/
+          if-no-files-found: error
