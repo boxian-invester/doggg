@@ -13,21 +13,30 @@ def finite(v):
     except (ValueError,TypeError): return None
 def avg(xs): return sum(xs)/len(xs) if xs else None
 def clamp(x,a,b): return max(a,min(b,x))
-# Classification: prefer official industry code/name already stored in stock_universe.
-# Codes 23-31 are TWSE electronics group and subindustries.
-ELECTRONIC_CODES={str(i) for i in range(23,32)}
+# Exchange industry classification. TPEx exposes numeric codes; TWSE exposes Chinese labels.
+# 23 = 電子工業; 24..31 = its eight subindustries.
+ELECTRONIC_CODES={f'{i:02d}' for i in range(23,32)}
 ELECTRONIC_LABELS=('半導體','電腦及週邊','電腦週邊','光電','通信網路','通訊網路',
                    '電子零組件','電子通路','資訊服務','其他電子','電子工業','電子類')
-NON_ELECTRONIC_LABELS=('電子遊戲','電子商務')
+# Industry labels are classifications, not company names. An unknown label is not guessed.
+NON_ELECTRONIC_LABELS=('水泥','食品','塑膠','紡織','電機機械','電器電纜','化學',
+ '生技醫療','玻璃陶瓷','造紙','鋼鐵','橡膠','汽車','建材營造','航運','觀光',
+ '金融保險','貿易百貨','油電燃氣','文化創意','農業科技','電子商務',
+ '綠能環保','數位雲端','運動休閒','居家生活','其他業','其他類',
+ '化學工業','化學生技醫療','觀光餐旅','數位雲端業')
 
 def classify_industry(code, label):
-    code=str(code or '').strip().zfill(2) if str(code or '').strip().isdigit() else str(code or '').strip()
-    label=str(label or '').strip()
-    if code in ELECTRONIC_CODES:return 'electronic'
-    if code and code.isdigit():return 'non_electronic'
-    if any(x in label for x in NON_ELECTRONIC_LABELS):return 'non_electronic'
+    """Use only official industry code or recognized official industry labels."""
+    code=str(code).strip() if code is not None else ''
+    label=str(label).strip() if label is not None else ''
+    if code.isdigit():
+        normalized=code.zfill(2)
+        if normalized in ELECTRONIC_CODES:return 'electronic'
+        # Numeric codes from official TWSE/TPEx industry classifications.
+        if 1 <= int(normalized) <= 39:return 'non_electronic'
+        return None
     if any(x in label for x in ELECTRONIC_LABELS):return 'electronic'
-    if label:return 'non_electronic'  # only when explicit industry label exists
+    if any(x in label for x in NON_ELECTRONIC_LABELS):return 'non_electronic'
     return None
 
 def read_industry_overrides():
@@ -171,8 +180,8 @@ def main():
     limitations=['大戶持股與集中度缺少時不給分；不以法人買超代替',
       '產業需求與前景未接入來源，故不生成假AI結論','模型尚未歷史回測，排名不是上漲機率',
       '若日線成交量單位非股數，成交金額門檻須先修正','目前為研究原型，休市日需再與官方交易日曆驗證',
-      '電子/非電子分類依 stock_universe 產業欄位或經核對 CSV；未分類股票不進榜']
-    result={'model_version':'top20-sector-research-v0.2','as_of':str(target),
+      '電子/非電子分類依官方產業代碼或已辨識官方產業名稱；未分類股票不進榜']
+    result={'model_version':'top20-sector-research-v0.3','as_of':str(target),
       'generated_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),
       'universe_evaluated':len(by),'eligible':eligible_count,
       'classified_eligible':sum(map(len,results.values())),
