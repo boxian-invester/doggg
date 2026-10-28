@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Sync TWSE/TPEx official industry classification into existing stock_universe."""
-import json, os, urllib.request, time
+import json, os, urllib.request, urllib.error, time, random
 import psycopg2
 from psycopg2.extras import execute_values
 
@@ -20,9 +20,35 @@ def pick(row, keys):
     return None
 
 def fetch(market, url):
-    req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0 TaiwanIndustryResearch/0.1','Accept':'application/json'})
-    with urllib.request.urlopen(req, timeout=35) as resp:
-        payload=json.load(resp)
+    payload = None
+    for attempt in range(1, 4):
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; TaiwanIndustryResearch/0.2)',
+            'Accept': 'application/json', 'Accept-Encoding': 'identity',
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                status = resp.status
+                ctype = resp.headers.get('Content-Type', '')
+                final_url = resp.geturl()
+                raw = resp.read(15_000_001)
+            print(f'{market} attempt={attempt} HTTP={status} content_type={ctype!r} bytes={len(raw)} url={final_url}', flush=True)
+            if len(raw) > 15_000_000:
+                raise RuntimeError(f'{market}: response too large')
+            if not raw.strip():
+                raise RuntimeError(f'{market}: empty API response')
+            try:
+                payload = json.loads(raw.decode('utf-8-sig'))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                # Show only short, sanitized diagnostics; never log DB credentials.
+                sample = raw[:180].decode('utf-8', 'replace').replace('\n', ' ').replace('\r', ' ')
+                raise RuntimeError(f'{market}: non-JSON response, content_type={ctype!r}, sample={sample!r}') from exc
+            break
+        except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
+            print(f'{market} attempt={attempt} failed: {exc}', flush=True)
+            if attempt == 3:
+                raise RuntimeError(f'{market}: official API unavailable after 3 attempts; database unchanged') from exc
+            time.sleep(2 * attempt)
     if isinstance(payload,dict):
         for key in ('data','result','results'):
             if isinstance(payload.get(key),list):payload=payload[key];break
