@@ -1,0 +1,25 @@
+name: Daily TOP10 Research Prototype
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 10 * * 1-5' # 18:35 Asia/Taipei; UTC schedule may be delayed
+permissions:
+  contents: read
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg2-binary>=2.9,<3'
+      - name: Run independent screener
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/top10_screen.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: top10-research-output
+          path: top10_output/
