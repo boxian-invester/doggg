@@ -26,19 +26,31 @@ NON_ELECTRONIC_LABELS=('水泥','食品','塑膠','紡織','電機機械','電�
  '化學工業','化學生技醫療','觀光餐旅','數位雲端業')
 
 def classify_industry(code, label):
-    """Use only official industry code or recognized official industry labels."""
-    code=str(code).strip() if code is not None else ''
-    label=str(label).strip() if label is not None else ''
-    if code.isdigit():
-        normalized=code.zfill(2)
-        if normalized in ELECTRONIC_CODES:return 'electronic'
-        # Numeric codes from official TWSE/TPEx industry classifications.
-        if 1 <= int(normalized) <= 39:return 'non_electronic'
-        return None
-    if any(x in label for x in ELECTRONIC_LABELS):return 'electronic'
-    if any(x in label for x in NON_ELECTRONIC_LABELS):return 'non_electronic'
-    return None
+    code = str(code or '').strip()
+    label = str(label or '').strip()
 
+    # TWSE 的 industry_name 可能存放官方產業代碼
+    if not code and label.isdigit():
+        code = label
+
+    if code.isdigit():
+        code = code.zfill(2)
+
+        if code in ELECTRONIC_CODES:
+            return 'electronic'
+
+        return 'non_electronic'
+
+    if any(x in label for x in NON_ELECTRONIC_LABELS):
+        return 'non_electronic'
+
+    if any(x in label for x in ELECTRONIC_LABELS):
+        return 'electronic'
+
+    if label:
+        return 'non_electronic'
+
+    return None
 def read_industry_overrides():
     """Optional verified classification CSV: symbol,industry_code,industry_name.
     Industry classification must be sourced by operator, not inferred from stock name.
