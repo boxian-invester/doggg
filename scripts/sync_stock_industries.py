@@ -10,7 +10,7 @@ SOURCES = {
 }
 SYMBOL_KEYS = ['公司代號','公司代碼','股票代號','證券代號','SecuritiesCompanyCode','Code']
 NAME_KEYS = ['產業別','產業類別','產業名稱','產業','Industry','IndustryName']
-CODE_KEYS = ['產業代號','產業代碼','產業別代碼','產業類別代碼','IndustryCode']
+CODE_KEYS = ['產業代號','產業代碼','產業別代碼','產業類別代碼','IndustryCode','SecuritiesIndustryCode']
 
 def pick(row, keys):
     for key in keys:
@@ -60,8 +60,11 @@ def fetch(market, url):
         sym=pick(row,SYMBOL_KEYS)
         industry=pick(row,NAME_KEYS)
         code=pick(row,CODE_KEYS)
+        if market == 'TPEx' and code and not industry:
+            # TPEx official feed supplies an industry code, not an industry name.
+            # Store a transparent placeholder instead of inventing a name.
+            industry = f'官方產業代碼 {code}'
         if sym and len(sym)==4 and sym.isdigit() and industry:
-            # Do not infer numeric codes from industry names.
             result.append((sym,code,industry,market))
     if len(result)<100:
         raise RuntimeError(f'{market}: Only {len(result)} classified rows; check API field names and availability')
