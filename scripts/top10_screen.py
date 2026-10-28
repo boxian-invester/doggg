@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Independent research screener. Read-only PostgreSQL; no external AI claims."""
-import os, json, math, datetime as dt
+import os, json, math, datetime as dt, csv, html
 from pathlib import Path
 from collections import defaultdict
 import psycopg2
@@ -13,6 +13,35 @@ def finite(v):
     except (ValueError,TypeError): return None
 def avg(xs): return sum(xs)/len(xs) if xs else None
 def clamp(x,a,b): return max(a,min(b,x))
+# Classification: prefer official industry code/name already stored in stock_universe.
+# Codes 23-31 are TWSE electronics group and subindustries.
+ELECTRONIC_CODES={str(i) for i in range(23,32)}
+ELECTRONIC_LABELS=('半導體','電腦及週邊','電腦週邊','光電','通信網路','通訊網路',
+                   '電子零組件','電子通路','資訊服務','其他電子','電子工業','電子類')
+NON_ELECTRONIC_LABELS=('電子遊戲','電子商務')
+
+def classify_industry(code, label):
+    code=str(code or '').strip().zfill(2) if str(code or '').strip().isdigit() else str(code or '').strip()
+    label=str(label or '').strip()
+    if code in ELECTRONIC_CODES:return 'electronic'
+    if code and code.isdigit():return 'non_electronic'
+    if any(x in label for x in NON_ELECTRONIC_LABELS):return 'non_electronic'
+    if any(x in label for x in ELECTRONIC_LABELS):return 'electronic'
+    if label:return 'non_electronic'  # only when explicit industry label exists
+    return None
+
+def read_industry_overrides():
+    """Optional verified classification CSV: symbol,industry_code,industry_name.
+    Industry classification must be sourced by operator, not inferred from stock name.
+    """
+    path=os.getenv('TOP10_INDUSTRY_CSV','').strip()
+    if not path:return {}
+    with open(path,encoding='utf-8-sig',newline='') as f:
+        rows=csv.DictReader(f)
+        if not {'symbol','industry_code','industry_name'}.issubset(rows.fieldnames or []):
+            raise RuntimeError('TOP10_INDUSTRY_CSV needs symbol,industry_code,industry_name')
+        return {str(r['symbol']).strip():(r['industry_code'],r['industry_name']) for r in rows}
+
 def score_stock(rows, index_map, inst_rows, symbol, name):
     # rows chronological; volume expected shares (see volume-unit check)
     if len(rows)<85:return None
@@ -91,9 +120,18 @@ def main():
             raw=c.fetchall()
             c.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='stock_universe'")
             uc={x['column_name'] for x in c.fetchall()}
-            names={}
+            names={}; industries={}
+            code_cols=('industry_code','industry_id','sector_code','industry_type_code')
+            label_cols=('industry_name','industry','sector','sector_name','industry_type')
+            code_col=next((k for k in code_cols if k in uc),None)
+            label_col=next((k for k in label_cols if k in uc),None)
             if {'symbol','name'}.issubset(uc):
-                c.execute('SELECT symbol,name FROM public.stock_universe');names={str(x['symbol']):x['name'] for x in c.fetchall()}
+                select_cols=['symbol','name']+([code_col] if code_col else [])+([label_col] if label_col and label_col!=code_col else [])
+                c.execute('SELECT '+','.join('"'+x+'"' for x in select_cols)+' FROM public.stock_universe')
+                for item in c.fetchall():
+                    sym=str(item['symbol']).strip(); names[sym]=item['name']
+                    industries[sym]=(item[code_col] if code_col else None,item[label_col] if label_col else None)
+            print(f'INDUSTRY SOURCE: stock_universe code={code_col or "missing"} label={label_col or "missing"}')
             inst=defaultdict(list)
             c.execute("SELECT to_regclass('public.v5_institution_daily') AS t")
             if c.fetchone()['t']:
@@ -107,20 +145,51 @@ def main():
         vals={k:finite(x[k]) for k in ('open','high','low','close','volume')}
         if any(v is None or v<=0 for v in vals.values()):continue
         by[sym].append({'trade_date':x['trade_date'],**vals})
-    results=[]
+    overrides=read_industry_overrides()
+    results={'electronic':[],'non_electronic':[]}
+    unclassified=[]
+    eligible_count=0
     for sym,rows in by.items():
         if rows[-1]['trade_date']!=target:continue
         x=score_stock(rows,index_map,inst,sym,names.get(sym,sym))
-        if x:results.append(x)
-    results.sort(key=lambda x:(x['normalized_score'] or -1,x['coverage_pct']),reverse=True)
-    result={'model_version':'top10-research-v0.1','as_of':str(target),'generated_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),'universe_evaluated':len(by),'eligible':len(results),'limitations':['大戶持股與集中度缺少時不給分；不以法人買超代替','產業需求與前景未接入來源，故不生成假AI結論','模型尚未歷史回測，排名不是上漲機率','若日線成交量單位非股數，成交金額門檻須先修正','目前為研究原型，休市日需再與官方交易日曆驗證'],'top10':results[:10]}
+        if not x:continue
+        eligible_count+=1
+        code,label=overrides.get(sym,industries.get(sym,(None,None)))
+        group=classify_industry(code,label)
+        if not group:
+            unclassified.append(sym)
+            continue
+        x['industry_code']=str(code) if code is not None else None
+        x['industry']=str(label) if label is not None else '產業代碼 '+str(code)
+        x['group']=group
+        results[group].append(x)
+    for arr in results.values():
+        arr.sort(key=lambda x:(x['normalized_score'] if x['normalized_score'] is not None else -1,x['coverage_pct']),reverse=True)
+    if not results['electronic'] or not results['non_electronic']:
+        raise RuntimeError('電子/非電子分類結果有一組為空。請確認 stock_universe 產業欄位，或提供 TOP10_INDUSTRY_CSV（symbol,industry_code,industry_name）。')
+    top_e=results['electronic'][:10];top_n=results['non_electronic'][:10]
+    limitations=['大戶持股與集中度缺少時不給分；不以法人買超代替',
+      '產業需求與前景未接入來源，故不生成假AI結論','模型尚未歷史回測，排名不是上漲機率',
+      '若日線成交量單位非股數，成交金額門檻須先修正','目前為研究原型，休市日需再與官方交易日曆驗證',
+      '電子/非電子分類依 stock_universe 產業欄位或經核對 CSV；未分類股票不進榜']
+    result={'model_version':'top20-sector-research-v0.2','as_of':str(target),
+      'generated_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),
+      'universe_evaluated':len(by),'eligible':eligible_count,
+      'classified_eligible':sum(map(len,results.values())),
+      'unclassified_eligible':len(unclassified),'unclassified_symbols':unclassified[:100],
+      'group_counts':{k:len(v) for k,v in results.items()},'limitations':limitations,
+      'electronic_top10':top_e,'non_electronic_top10':top_n,
+      'top20':top_e+top_n}
+    (OUT/'top20.json').write_text(json.dumps(result,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
+    # Keep a compatibility output for workflows expecting top10.json.
     (OUT/'top10.json').write_text(json.dumps(result,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
-    import html
-    trs=[]
-    for i,x in enumerate(results[:10],1):
-        safe=lambda v:html.escape(str(v))
-        trs.append(f'<tr><td>{i}</td><td>{safe(x["symbol"])} {safe(x["name"])}</td><td>{x["score_observed"]}/{x["available_max"]}</td><td>{x["normalized_score"]}</td><td>{"是" if x["breakout_volume_flag"] else "否"}</td><td>{safe(x["research_note"])}</td></tr>')
-    page='''<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>每日潛力起漲 TOP 10｜研究原型</title><style>body{font-family:system-ui;background:#0c192d;color:#eef5ff;padding:24px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #345;padding:12px;text-align:left}h1{color:#5eead4}.note{color:#ffdc93;line-height:1.7}</style><h1>每日潛力起漲 TOP 10</h1><p>資料日期：DATE</p><p class="note">研究原型：大戶持股集中度、AI 產業研究尚未接入；已得分/可得分不代表完整100分，無法證明未來漲幅。爆量突破僅標示不加分。</p><table><thead><tr><th>名次</th><th>股票</th><th>已得/可得</th><th>可得分標準化</th><th>爆量突破</th><th>評分說明</th></tr></thead><tbody>ROWS</tbody></table></html>'''.replace('DATE',str(target)).replace('ROWS',''.join(trs))
+    def table(items):
+        lines=[]
+        for i,x in enumerate(items,1):
+            h=lambda v:html.escape(str(v))
+            lines.append(f'<tr><td>{i}</td><td>{h(x["symbol"])} {h(x["name"])}</td><td>{h(x["industry"])}</td><td>{x["score_observed"]}/{x["available_max"]}</td><td>{x["normalized_score"]}</td><td>{"是" if x["breakout_volume_flag"] else "否"}</td><td>{h(x["research_note"])}</td></tr>')
+        return '<table><thead><tr><th>名次</th><th>股票</th><th>產業</th><th>已得/可得</th><th>標準化</th><th>爆量突破</th><th>評分說明</th></tr></thead><tbody>'+''.join(lines)+'</tbody></table>'
+    page="""<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>每日潛力起漲 TOP 20｜電子與非電子</title><style>body{font-family:system-ui;background:#0c192d;color:#eef5ff;padding:24px;line-height:1.6}table{border-collapse:collapse;width:100%;margin-bottom:40px}td,th{border-bottom:1px solid #345;padding:12px;text-align:left}h1,h2{color:#5eead4}.note{color:#ffdc93;line-height:1.7}th{white-space:nowrap}@media(max-width:800px){table{display:block;overflow-x:auto}}</style><h1>每日潛力起漲 TOP 20</h1><p>資料日期：DATE</p><p class="note">研究原型：大戶持股集中度、AI 產業研究尚未接入；分數不是上漲機率。爆量突破僅標示不加分。未分類符合資格股票 UNCLASSIFIED 檔，未納入排行。</p><h2>電子股 TOP 10</h2>ETABLE<h2>非電子股 TOP 10</h2>NTABLE</html>""".replace('DATE',str(target)).replace('UNCLASSIFIED',str(len(unclassified))).replace('ETABLE',table(top_e)).replace('NTABLE',table(top_n))
     (OUT/'index.html').write_text(page,encoding='utf-8')
-    print(f'DONE target={target} scanned={len(by)} eligible={len(results)} top={len(results[:10])} output={OUT}')
+    print(f'DONE target={target} scanned={len(by)} eligible={eligible_count} electronic={len(results["electronic"])} non_electronic={len(results["non_electronic"])} unclassified={len(unclassified)} top_e={len(top_e)} top_n={len(top_n)} output={OUT}')
 if __name__=='__main__':main()
