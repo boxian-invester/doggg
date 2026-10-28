@@ -87,12 +87,32 @@ def score_stock(rows, index_map, inst_rows, symbol, name):
     down=[x['volume'] for x in rows[-21:] if x['close']<x['open']]
     ud=avg(up)/avg(down) if up and down and avg(down)>0 else None
     up_volume=clamp(10+10*(ud-1),0,20) if ud is not None else None
-    # compare market on matching dates only, avoiding assumed calendar continuity
+    # Relative strength (20 points): 12 for 20-session outperformance,
+    # 8 for resilience specifically on market down sessions.
+    # The previous 10 + rel20*200 formula saturated at +5pp outperformance.
     old=rows[-21]; m0=index_map.get(old['trade_date']); m1=index_map.get(today)
-    if m0 and m1 and m0>0:
+    rel20=None; relative=None; downside_rel=None; down_sessions=0
+    if m0 is not None and m1 is not None and m0>0 and m1>0 and old['close']>0:
         rel20=(close/old['close']-1)-(m1/m0-1)
-        relative=clamp(10+rel20*200,0,20)
-    else:relative=None;rel20=None
+        # 0pp outperformance -> 6/12; +/-15pp -> endpoints.
+        trend_points=clamp(6+40*rel20,0,12)
+        downside_diffs=[]
+        for previous,current in zip(rows[-21:-1],rows[-20:]):
+            p_idx=index_map.get(previous['trade_date'])
+            c_idx=index_map.get(current['trade_date'])
+            if p_idx is None or c_idx is None or p_idx<=0 or c_idx<=0 or previous['close']<=0:
+                continue
+            index_return=c_idx/p_idx-1
+            if index_return<0:
+                stock_return=current['close']/previous['close']-1
+                downside_diffs.append(stock_return-index_return)
+        down_sessions=len(downside_diffs)
+        if down_sessions>=3:
+            downside_rel=avg(downside_diffs)
+            # Equal performance on down days -> 4/8; +/-2pp daily -> endpoints.
+            defense_points=clamp(4+200*downside_rel,0,8)
+            relative=round(trend_points+defense_points,2)
+        # Do not fabricate the missing downside-resilience component.
     lows=[min(x['low'] for x in rows[-30:-20]),min(x['low'] for x in rows[-20:-10]),min(x['low'] for x in rows[-10:])]
     higher=int(lows[0]<lows[1])+int(lows[1]<lows[2])
     higher_lows=5+5*higher if close>=min(x['low'] for x in rows[-20:]) else 0
@@ -112,8 +132,9 @@ def score_stock(rows, index_map, inst_rows, symbol, name):
     if burst:flags.append('爆量突破60日前高（不計分）')
     if inst_total is None:flags.append('近10日法人資料不足（不計入持股集中評分）')
     flags.append('大戶持股集中度未接入，20分暫不計算')
-    if rel20 is None:flags.append('大盤對齊資料不足，抗跌分數缺失')
-    return {'symbol':symbol,'name':name,'trade_date':str(today),'close':close,'score_observed':round(raw,2),'available_max':available,'normalized_score':normalized,'coverage_pct':coverage,'scores':components,'breakout_volume_flag':burst,'volume_ratio_20':round(vol_ratio,2),'prior_high_60':round(prior_high,2),'return_5d_pct':round(ret5*100,2),'relative_20d_pct':round(rel20*100,2) if rel20 is not None else None,'institution_net_10d_shares':inst_total,'industry':'待接入官方公司資料','industry_demand_outlook':'資料不足，未作判斷','reasons':flags,'research_note':f'整理位置分數 {components["breakout"]}/25；量價 {components["up_volume"]}/20；相對大盤 {components["relative_strength"]}/20；低點結構 {components["higher_lows"]}/15。大戶持股資料缺少，不能聲稱主力正在吸籌。國際需求與未來展望須有公司公告、財報及產業來源才可產生。'}
+    if rel20 is None:flags.append('大盤對齊資料不足，相對強弱分數缺失')
+    elif down_sessions<3:flags.append(f'大盤下跌有效樣本僅{down_sessions}日（至少3日），相對強弱分數暫缺')
+    return {'symbol':symbol,'name':name,'trade_date':str(today),'close':close,'score_observed':round(raw,2),'available_max':available,'normalized_score':normalized,'coverage_pct':coverage,'scores':components,'breakout_volume_flag':burst,'volume_ratio_20':round(vol_ratio,2),'prior_high_60':round(prior_high,2),'return_5d_pct':round(ret5*100,2),'relative_20d_pct':round(rel20*100,2) if rel20 is not None else None,'market_down_days_20':down_sessions,'downside_relative_avg_pct':round(downside_rel*100,3) if downside_rel is not None else None,'institution_net_10d_shares':inst_total,'industry':'待接入官方公司資料','industry_demand_outlook':'資料不足，未作判斷','reasons':flags,'research_note':f'整理位置分數 {components["breakout"]}/25；量價 {components["up_volume"]}/20；相對大盤 {components["relative_strength"]}/20；低點結構 {components["higher_lows"]}/15。大戶持股資料缺少，不能聲稱主力正在吸籌。國際需求與未來展望須有公司公告、財報及產業來源才可產生。'}
 
 def main():
     url=os.getenv('DATABASE_URL')
@@ -192,8 +213,9 @@ def main():
     limitations=['大戶持股與集中度缺少時不給分；不以法人買超代替',
       '產業需求與前景未接入來源，故不生成假AI結論','模型尚未歷史回測，排名不是上漲機率',
       '若日線成交量單位非股數，成交金額門檻須先修正','目前為研究原型，休市日需再與官方交易日曆驗證',
-      '電子/非電子分類依官方產業代碼或已辨識官方產業名稱；未分類股票不進榜']
-    result={'model_version':'top20-sector-research-v0.3','as_of':str(target),
+      '電子/非電子分類依官方產業代碼或已辨識官方產業名稱；未分類股票不進榜',
+       '相對強弱20分拆為20日超額報酬12分及大盤下跌日抗跌8分；不足3個有效下跌日則缺分；參數尚待回測']
+    result={'model_version':'top20-sector-research-v0.4','as_of':str(target),
       'generated_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),
       'universe_evaluated':len(by),'eligible':eligible_count,
       'classified_eligible':sum(map(len,results.values())),
