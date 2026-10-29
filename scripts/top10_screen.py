@@ -16,6 +16,7 @@ def clamp(x,a,b): return max(a,min(b,x))
 # Exchange industry classification. TPEx exposes numeric codes; TWSE exposes Chinese labels.
 # 23 = 電子工業; 24..31 = its eight subindustries.
 ELECTRONIC_CODES={f'{i:02d}' for i in range(23,32)}
+EXCLUDED_INDUSTRY_CODES={'91'}  # Depositary receipts; not ordinary shares
 ELECTRONIC_LABELS=('半導體','電腦及週邊','電腦週邊','光電','通信網路','通訊網路',
                    '電子零組件','電子通路','資訊服務','其他電子','電子工業','電子類')
 # Industry labels are classifications, not company names. An unknown label is not guessed.
@@ -26,31 +27,31 @@ NON_ELECTRONIC_LABELS=('水泥','食品','塑膠','紡織','電機機械','電�
  '化學工業','化學生技醫療','觀光餐旅','數位雲端業')
 
 def classify_industry(code, label):
-    code = str(code or '').strip()
-    label = str(label or '').strip()
+    """Exchange industry grouping, not a guess based on a company's name.
 
-    # TWSE 的 industry_name 可能存放官方產業代碼
+    TWSE sometimes stores numeric industry codes in industry_name.
+    36 (digital/cloud) remains non-electronic under the official 23-31 grouping.
+    """
+    code = str(code).strip() if code is not None else ''
+    label = str(label).strip() if label is not None else ''
+    if code.lower() in ('none', 'nan', 'null'): code = ''
+    if label.lower() in ('none', 'nan', 'null'): label = ''
     if not code and label.isdigit():
         code = label
-
     if code.isdigit():
         code = code.zfill(2)
-
-        if code in ELECTRONIC_CODES:
-            return 'electronic'
-
-        return 'non_electronic'
-
+        if code in EXCLUDED_INDUSTRY_CODES:
+            return None
+        # Unknown / invalid numeric codes must not silently become non-electronic.
+        if not 1 <= int(code) <= 38:
+            return None
+        return 'electronic' if code in ELECTRONIC_CODES else 'non_electronic'
     if any(x in label for x in NON_ELECTRONIC_LABELS):
         return 'non_electronic'
-
     if any(x in label for x in ELECTRONIC_LABELS):
         return 'electronic'
-
-    if label:
-        return 'non_electronic'
-
     return None
+
 def read_industry_overrides():
     """Optional verified classification CSV: symbol,industry_code,industry_name.
     Industry classification must be sourced by operator, not inferred from stock name.
@@ -128,13 +129,24 @@ def score_stock(rows, index_map, inst_rows, symbol, name):
     inst_total=sum(x['foreign_net_shares']+x['trust_net_shares']+x['dealer_net_shares'] for x in inst10) if len(inst10)==10 else None
     vol_ratio=volume/vol20
     burst=bool(close>prior_high and vol_ratio>=2)
+    # Descriptive labels only: no score changes or additional ranking bonuses.
+    if burst:
+        signal='爆量突破60日前高'
+    elif close>prior_high:
+        signal='突破60日前高（未爆量）'
+    elif proximity>=0.97 and close>ma20:
+        signal='接近60日前高'
+    elif above20 and vol_ratio<0.8:
+        signal='量縮整理（站上20日均線）'
+    else:
+        signal='整理觀察'
     flags=[]
     if burst:flags.append('爆量突破60日前高（不計分）')
     if inst_total is None:flags.append('近10日法人資料不足（不計入持股集中評分）')
     flags.append('大戶持股集中度未接入，20分暫不計算')
     if rel20 is None:flags.append('大盤對齊資料不足，相對強弱分數缺失')
     elif down_sessions<3:flags.append(f'大盤下跌有效樣本僅{down_sessions}日（至少3日），相對強弱分數暫缺')
-    return {'symbol':symbol,'name':name,'trade_date':str(today),'close':close,'score_observed':round(raw,2),'available_max':available,'normalized_score':normalized,'coverage_pct':coverage,'scores':components,'breakout_volume_flag':burst,'volume_ratio_20':round(vol_ratio,2),'prior_high_60':round(prior_high,2),'return_5d_pct':round(ret5*100,2),'relative_20d_pct':round(rel20*100,2) if rel20 is not None else None,'market_down_days_20':down_sessions,'downside_relative_avg_pct':round(downside_rel*100,3) if downside_rel is not None else None,'institution_net_10d_shares':inst_total,'industry':'待接入官方公司資料','industry_demand_outlook':'資料不足，未作判斷','reasons':flags,'research_note':f'整理位置分數 {components["breakout"]}/25；量價 {components["up_volume"]}/20；相對大盤 {components["relative_strength"]}/20；低點結構 {components["higher_lows"]}/15。大戶持股資料缺少，不能聲稱主力正在吸籌。國際需求與未來展望須有公司公告、財報及產業來源才可產生。'}
+    return {'symbol':symbol,'name':name,'trade_date':str(today),'close':close,'score_observed':round(raw,2),'available_max':available,'normalized_score':normalized,'coverage_pct':coverage,'scores':components,'breakout_volume_flag':burst,'volume_ratio_20':round(vol_ratio,2),'up_day_avg_volume_21':round(avg(up),2) if up else None,'down_day_avg_volume_21':round(avg(down),2) if down else None,'up_down_volume_ratio_21':round(ud,3) if ud is not None else None,'up_day_count_21':len(up),'down_day_count_21':len(down),'signal_label':signal,'prior_high_60':round(prior_high,2),'return_5d_pct':round(ret5*100,2),'relative_20d_pct':round(rel20*100,2) if rel20 is not None else None,'market_down_days_20':down_sessions,'downside_relative_avg_pct':round(downside_rel*100,3) if downside_rel is not None else None,'institution_net_10d_shares':inst_total,'industry':'待接入官方公司資料','industry_demand_outlook':'資料不足，未作判斷','reasons':flags,'research_note':f'整理位置分數 {components["breakout"]}/25；量價 {components["up_volume"]}/20；相對大盤 {components["relative_strength"]}/20；低點結構 {components["higher_lows"]}/15。大戶持股資料缺少，不能聲稱主力正在吸籌。國際需求與未來展望須有公司公告、財報及產業來源才可產生。'}
 
 def main():
     url=os.getenv('DATABASE_URL')
@@ -201,8 +213,12 @@ def main():
         if not group:
             unclassified.append(sym)
             continue
-        x['industry_code']=str(code) if code is not None else None
-        x['industry']=str(label) if label is not None else '產業代碼 '+str(code)
+        resolved_code = str(code).strip() if code is not None else ''
+        resolved_label = str(label).strip() if label is not None else ''
+        if not resolved_code and resolved_label.isdigit():
+            resolved_code = resolved_label
+        x['industry_code']=resolved_code.zfill(2) if resolved_code.isdigit() else (resolved_code or None)
+        x['industry']=resolved_label if resolved_label and not resolved_label.isdigit() and not resolved_label.startswith('官方產業代碼') else ('產業代碼 '+str(x['industry_code']) if x['industry_code'] else '產業名稱待補')
         x['group']=group
         results[group].append(x)
     for arr in results.values():
@@ -213,9 +229,10 @@ def main():
     limitations=['大戶持股與集中度缺少時不給分；不以法人買超代替',
       '產業需求與前景未接入來源，故不生成假AI結論','模型尚未歷史回測，排名不是上漲機率',
       '若日線成交量單位非股數，成交金額門檻須先修正','目前為研究原型，休市日需再與官方交易日曆驗證',
-      '電子/非電子分類依官方產業代碼或已辨識官方產業名稱；未分類股票不進榜',
+      '電子/非電子分類依官方產業代碼23～31或已辨識官方產業名稱；數位雲端36依官方分類屬非電子；代碼91及未知類別不進榜',
+       '量價分數衡量近21日紅K與黑K平均量比，非當日量比；新增起漲標籤僅供觀察不加分',
        '相對強弱20分拆為20日超額報酬12分及大盤下跌日抗跌8分；不足3個有效下跌日則缺分；參數尚待回測']
-    result={'model_version':'top20-sector-research-v0.4','as_of':str(target),
+    result={'model_version':'top20-sector-research-v0.5','as_of':str(target),
       'generated_at_utc':dt.datetime.now(dt.timezone.utc).isoformat(),
       'universe_evaluated':len(by),'eligible':eligible_count,
       'classified_eligible':sum(map(len,results.values())),
@@ -230,9 +247,9 @@ def main():
         lines=[]
         for i,x in enumerate(items,1):
             h=lambda v:html.escape(str(v))
-            lines.append(f'<tr><td>{i}</td><td>{h(x["symbol"])} {h(x["name"])}</td><td>{h(x["industry"])}</td><td>{x["score_observed"]}/{x["available_max"]}</td><td>{x["normalized_score"]}</td><td>{"是" if x["breakout_volume_flag"] else "否"}</td><td>{h(x["research_note"])}</td></tr>')
-        return '<table><thead><tr><th>名次</th><th>股票</th><th>產業</th><th>已得/可得</th><th>標準化</th><th>爆量突破</th><th>評分說明</th></tr></thead><tbody>'+''.join(lines)+'</tbody></table>'
-    page="""<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>每日潛力起漲 TOP 20｜電子與非電子</title><style>body{font-family:system-ui;background:#0c192d;color:#eef5ff;padding:24px;line-height:1.6}table{border-collapse:collapse;width:100%;margin-bottom:40px}td,th{border-bottom:1px solid #345;padding:12px;text-align:left}h1,h2{color:#5eead4}.note{color:#ffdc93;line-height:1.7}th{white-space:nowrap}@media(max-width:800px){table{display:block;overflow-x:auto}}</style><h1>每日潛力起漲 TOP 20</h1><p>資料日期：DATE</p><p class="note">研究原型：大戶持股集中度、AI 產業研究尚未接入；分數不是上漲機率。爆量突破僅標示不加分。未分類符合資格股票 UNCLASSIFIED 檔，未納入排行。</p><h2>電子股 TOP 10</h2>ETABLE<h2>非電子股 TOP 10</h2>NTABLE</html>""".replace('DATE',str(target)).replace('UNCLASSIFIED',str(len(unclassified))).replace('ETABLE',table(top_e)).replace('NTABLE',table(top_n))
+            lines.append(f'<tr><td>{i}</td><td>{h(x["symbol"])} {h(x["name"])}</td><td>{h(x["industry"])}</td><td>{x["score_observed"]}/{x["available_max"]}</td><td>{x["normalized_score"]}</td><td>{h(x["signal_label"])}</td><td>{h(x["volume_ratio_20"])}</td><td>{h(x["up_down_volume_ratio_21"])}</td><td>{h(x["research_note"])}</td></tr>')
+        return '<table><thead><tr><th>名次</th><th>股票</th><th>產業</th><th>已得/可得</th><th>標準化</th><th>訊號</th><th>當日量比</th><th>漲跌日均量比</th><th>評分說明</th></tr></thead><tbody>'+''.join(lines)+'</tbody></table>'
+    page="""<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>每日潛力起漲 TOP 20｜電子與非電子</title><style>body{font-family:system-ui;background:#0c192d;color:#eef5ff;padding:24px;line-height:1.6}table{border-collapse:collapse;width:100%;margin-bottom:40px}td,th{border-bottom:1px solid #345;padding:12px;text-align:left}h1,h2{color:#5eead4}.note{color:#ffdc93;line-height:1.7}th{white-space:nowrap}@media(max-width:800px){table{display:block;overflow-x:auto}}</style><h1>每日潛力起漲 TOP 20</h1><p>資料日期：DATE</p><p class="note">研究原型：大戶持股集中度、AI 產業研究尚未接入；分數不是上漲機率。起漲訊號僅標示不加分；漲跌日均量比不同於當日量比。未分類符合資格股票 UNCLASSIFIED 檔，未納入排行。</p><h2>電子股 TOP 10</h2>ETABLE<h2>非電子股 TOP 10</h2>NTABLE</html>""".replace('DATE',str(target)).replace('UNCLASSIFIED',str(len(unclassified))).replace('ETABLE',table(top_e)).replace('NTABLE',table(top_n))
     (OUT/'index.html').write_text(page,encoding='utf-8')
     print(f'DONE target={target} scanned={len(by)} eligible={eligible_count} electronic={len(results["electronic"])} non_electronic={len(results["non_electronic"])} unclassified={len(unclassified)} top_e={len(top_e)} top_n={len(top_n)} output={OUT}')
 if __name__=='__main__':main()
