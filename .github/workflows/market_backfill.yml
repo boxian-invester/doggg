@@ -10,8 +10,22 @@ on:
         options:
           - '3'
           - '5'
+      mode:
+        description: 'daily (last 21 calendar days) or full backfill'
+        type: choice
+        required: true
+        default: 'daily'
+        options:
+          - 'daily'
+          - 'backfill'
+  schedule:
+    # 09:30 UTC = 17:30 Taiwan; US previous trading session has closed.
+    - cron: '30 9 * * 1-6'
 permissions:
   contents: read
+concurrency:
+  group: market-daily-bars
+  cancel-in-progress: false
 jobs:
   backfill:
     runs-on: ubuntu-latest
@@ -31,5 +45,8 @@ jobs:
             echo "Missing DATABASE_URL secret"
             exit 1
           fi
-      - name: Backfill market indexes
-        run: python -m scripts.market_backfill --years "${{ inputs.years || '5' }}"
+      - name: Update market indexes
+        env:
+          MODE: ${{ github.event.inputs.mode || 'daily' }}
+          YEARS: ${{ github.event.inputs.years || '5' }}
+        run: python -m scripts.market_backfill --mode "$MODE" --years "$YEARS"
