@@ -5,3 +5,4 @@ numpy>=1.26,<3
 yfinance>=0.2.55,<2
 psycopg[binary]>=3.2,<4
 requests>=2.31,<3
+beautifulsoup4>=4.12
