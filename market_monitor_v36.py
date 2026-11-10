@@ -26,65 +26,67 @@ def _tables(payload):
 
 
 def parse_margin(payload):
-    """MI_MARGN: listed financing balance, amount (千元) -> 億元.
-
-    Fail closed unless an explicit amount unit and balance column are identifiable.
-    """
+    """TWSE MI_MARGN: listed financing amount, 仟元 -> 億元."""
     for table in _tables(payload):
         title = _norm(table.get('title', ''))
         fields = [_norm(x) for x in table.get('fields', [])]
-        if '融資' not in title or '融券' not in title:
+        if '信用交易統計' not in title or '項目' not in fields:
             continue
-        if not ('千元' in title or '仟元' in title):
-            continue
-        balance_col = next((i for i, f in enumerate(fields) if ('今日餘額' in f or '當日餘額' in f or '本日餘額' in f)), None)
+        item_col = fields.index('項目')
+        balance_col = next((i for i, f in enumerate(fields) if f in ('今日餘額', '當日餘額', '本日餘額')), None)
+        previous_col = next((i for i, f in enumerate(fields) if f == '前日餘額'), None)
         if balance_col is None:
             continue
         for row in table.get('data') or []:
             if not isinstance(row, (list, tuple)) or len(row) <= balance_col:
                 continue
-            name = _norm(row[0])
-            if name in ('融資金額', '融資(交易單位)', '融資') or name.startswith('融資金額'):
-                raw = _norm(row[balance_col])
-                if not re.fullmatch(r'\d+(?:\.\d+)?', raw):
-                    raise ValueError('margin_balance_invalid')
-                value = float(raw) / 100000.0  # 千元 / 100,000 = 億元
-                if value <= 0:
-                    raise ValueError('margin_balance_nonpositive')
-                return round(value, 3)
+            name = _norm(row[item_col])
+            # Explicit unit on the ROW, not the table title. Never use 交易單位.
+            if not re.fullmatch(r'融資金額\((?:仟元|千元)\)', name):
+                continue
+            raw = _norm(row[balance_col])
+            if not re.fullmatch(r'\d+(?:\.\d+)?', raw):
+                raise ValueError('margin_balance_invalid')
+            value = float(raw) / 100000.0
+            if value <= 0:
+                raise ValueError('margin_balance_nonpositive')
+            # Preserve old return type (float) for compatibility with market_monitor.py.
+            return round(value, 3)
     raise ValueError('margin_official_table_unrecognized')
 
 
 def parse_breadth(payload):
-    """MI_INDEX stocks-only counts; avoid aggregate including warrants/ETFs."""
+    """TWSE MI_INDEX: stocks-only up/down with embedded limit counts."""
     for table in _tables(payload):
         title = _norm(table.get('title', ''))
         fields = [_norm(x) for x in table.get('fields', [])]
-        if '漲跌' not in title or not fields:
+        if title != '漲跌證券數合計' or '股票' not in fields or '類型' not in fields:
             continue
-        stock_idx = next((i for i, f in enumerate(fields) if f in ('股票', '股票(不含權證)', '股票(不含ETF及權證)')), None)
-        if stock_idx is None:
-            continue
+        stock_idx = fields.index('股票')
+        label_idx = fields.index('類型')
         found = {}
         for row in table.get('data') or []:
-            if not isinstance(row, (list, tuple)) or len(row) <= stock_idx:
+            if not isinstance(row, (list, tuple)) or len(row) <= max(stock_idx, label_idx):
                 continue
-            label = _norm(row[0])
+            label = _norm(row[label_idx])
             raw = _norm(row[stock_idx])
-            if not re.fullmatch(r'\d+', raw):
-                continue
-            val = int(raw)
-            if label in ('上漲', '上漲家數'):
-                found['up'] = val
-            elif label in ('下跌', '下跌家數'):
-                found['down'] = val
-            elif label in ('持平', '平盤', '持平家數'):
-                found['flat'] = val
-            elif label in ('漲停', '漲停家數'):
-                found['limit_up'] = val
-            elif label in ('跌停', '跌停家數'):
-                found['limit_down'] = val
+            if label.startswith('上漲'):
+                match = re.fullmatch(r'(\d+)\((\d+)\)', raw) if '漲停' in label else re.fullmatch(r'(\d+)', raw)
+                if match:
+                    found['up'] = int(match.group(1))
+                    if '漲停' in label:
+                        found['limit_up'] = int(match.group(2))
+            elif label.startswith('下跌'):
+                match = re.fullmatch(r'(\d+)\((\d+)\)', raw) if '跌停' in label else re.fullmatch(r'(\d+)', raw)
+                if match:
+                    found['down'] = int(match.group(1))
+                    if '跌停' in label:
+                        found['limit_down'] = int(match.group(2))
+            elif label in ('持平', '平盤') and re.fullmatch(r'\d+', raw):
+                found['flat'] = int(raw)
         if all(k in found for k in ('up', 'down', 'flat')) and 100 <= sum(found[k] for k in ('up', 'down', 'flat')) <= 5000:
+            if found.get('limit_up', 0) > found['up'] or found.get('limit_down', 0) > found['down']:
+                raise ValueError('breadth_limit_counts_invalid')
             return found
     raise ValueError('breadth_stocks_only_table_unrecognized')
 
@@ -113,7 +115,7 @@ def parse_vix_txt(content, expected_date=None):
 
 def _day_json(endpoint, day):
     url = 'https://www.twse.com.tw/exchangeReport/' + endpoint + '?' + urlencode({
-        'response': 'json', 'date': day.strftime('%Y%m%d'), 'selectType': 'ALL'
+        'response': 'json', 'date': day.strftime('%Y%m%d'), 'selectType': 'MS' if endpoint == 'MI_MARGN' else 'ALL', 'type': 'ALLBUT0999' if endpoint == 'MI_INDEX' else 'ALL'
     })
     return _fetch_json(url)
 
@@ -131,6 +133,9 @@ def update_official_v36(metrics, now, missing):
                 payload = _day_json(endpoint, day)
                 # TWSE returns its actual date in some responses; reject explicit mismatches.
                 if str(payload.get('stat', '')).upper() != 'OK':
+                    continue
+                # Do not label a previous session as the requested day.
+                if payload.get('date') and str(payload['date']) != day.strftime('%Y%m%d'):
                     continue
                 value = parser(payload)
                 if key == 'margin':
