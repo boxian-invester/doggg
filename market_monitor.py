@@ -161,6 +161,87 @@ def _official_cash(metrics):
                                 '官方資料尚未取得或欄位格式不符' + (' (' + last_error + ')' if last_error else ''))
 
 
+
+
+def _parse_taifex_tx(html, expected_date=None):
+    """Parse TAIFEX contract-specific TXF foreign open interest; never trading volume."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, 'html.parser')
+    date_input = soup.find('input', attrs={'name': 'queryDate'})
+    if expected_date is not None:
+        shown = date_input.get('value', '').replace('/', '-') if date_input else ''
+        if shown != expected_date.isoformat():
+            raise ValueError('taifex_date_mismatch')
+    for table in soup.find_all('table'):
+        if '未平倉餘額' not in table.get_text(' ', strip=True):
+            continue
+        product = None
+        for tr in table.find_all('tr'):
+            cells = [c.get_text(' ', strip=True) for c in tr.find_all(['td', 'th'], recursive=False)]
+            if len(cells) == 15 and cells[1].replace(' ', '') == '臺股期貨':
+                product = 'TXF'
+                who, numbers = cells[2], cells[3:]
+            elif len(cells) == 15:
+                product = None
+                continue
+            elif len(cells) == 13:
+                who, numbers = cells[0], cells[1:]
+            else:
+                continue
+            if product != 'TXF' or who.strip() != '外資':
+                continue
+            def as_int(x):
+                return int(x.replace(',', '').replace(' ', ''))
+            long_oi, short_oi, net_oi = (as_int(numbers[i]) for i in (6, 8, 10))
+            if long_oi < 0 or short_oi < 0 or long_oi - short_oi != net_oi:
+                raise ValueError('taifex_oi_inconsistent')
+            return {'long_oi': long_oi, 'short_oi': short_oi, 'net_oi': net_oi}
+    raise ValueError('taifex_foreign_txf_row_not_found')
+
+
+def _taifex_tx_day(day):
+    """POST the same form fields used by the official contract-by-date query."""
+    from urllib.parse import urlencode
+    url = 'https://www.taifex.com.tw/cht/3/futContractsDate'
+    data = urlencode({'queryType': '1', 'doQuery': '1',
+                      'queryDate': day.strftime('%Y/%m/%d'),
+                      'commodityId': 'TXF'}).encode('ascii')
+    req = Request(url, data=data, headers={
+        'User-Agent': 'Mozilla/5.0',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'text/html',
+    })
+    with urlopen(req, timeout=18) as response:
+        html = response.read().decode('utf-8', errors='replace')
+    return _parse_taifex_tx(html, expected_date=day)
+
+
+def _official_foreign_futures(metrics):
+    now = datetime.now(TZ)
+    errors = []
+    for offset in range(8):
+        day = (now - timedelta(days=offset)).date()
+        if day.weekday() >= 5:
+            continue
+        try:
+            record = _taifex_tx_day(day)
+            metrics['foreign_futures'] = {
+                'label': '外資臺股期貨 TX 淨未平倉',
+                'value': record['net_oi'], 'unit': '口',
+                'long_oi': record['long_oi'], 'short_oi': record['short_oi'],
+                'net_oi': record['net_oi'], 'date': day.isoformat(),
+                'status': 'ok', 'source': 'TAIFEX futContractsDate (TXF)',
+                'frequency': 'official_after_close',
+                'note': '僅臺股期貨 TXF；多單減空單，負數為淨空單。非當日成交量。',
+            }
+            return
+        except Exception as exc:
+            errors.append(type(exc).__name__ + ':' + str(exc)[:70])
+    metrics['foreign_futures'] = _missing(
+        'foreign_futures', 'unavailable',
+        'TAIFEX 資料未取得或驗證失敗；不以其他契約替代。' +
+        (' ' + errors[-1] if errors else ''))
+
 def get_market_monitor(force=False):
     with _LOCK:
         if not force and _CACHE['result'] and time.monotonic() - _CACHE['at'] < _TTL:
@@ -169,6 +250,7 @@ def get_market_monitor(force=False):
         for key in OFFICIAL:
             metrics[key] = _missing(key)
         _official_cash(metrics)
+        _official_foreign_futures(metrics)
         # Only explicitly defined comparable directions are scored.  The
         # full-weight scoring model is NOT ready until the official data exist.
         weighted = [('usdtwd', 15, False), ('nasdaq', 5, True),
@@ -191,7 +273,7 @@ def get_market_monitor(force=False):
             'score': score, 'coverage_weight': known, 'total_weight': 100,
             'score_label': '局部方向分數（非預測機率）',
             'official_cash_connected': all(metrics[k]['status'] == 'ok' for k in ('foreign_cash', 'trust_cash')),
-            'warning': '正式多空評分尚未啟用：期貨淨部位、融資、台灣VIX及市場廣度仍待可靠官方解析；外資現貨資料不等同資金跨境流量。DXY 行情為第三方延遲指數報價。',
+            'warning': '正式多空評分尚未啟用：融資、台灣VIX及市場廣度仍待可靠官方解析；期貨資料可能因官方連線失敗而缺漏；外資現貨資料不等同資金跨境流量。DXY 行情為第三方延遲指數報價。',
             'forecast_next_day': None, 'forecast_20d': None,
         }
         _CACHE.update(at=time.monotonic(), result=result)
