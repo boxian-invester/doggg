@@ -1,0 +1,28 @@
+name: Taiwan Market Monitor Snapshot
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC; Taiwan time 08:30, 16:30, 20:30 Mon-Fri
+    - cron: '30 0,8,12 * * 1-5'
+permissions:
+  contents: read
+concurrency:
+  group: taiwan-market-monitor
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check database configuration
+        run: test -n "$DATABASE_URL"
+      - name: Update market monitor snapshot
+        run: python -m scripts.update_market_monitor
