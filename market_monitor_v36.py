@@ -147,32 +147,24 @@ def update_official_v36(metrics, now, missing):
                 last_error = type(exc).__name__ + ': ' + str(exc)[:70]
         else:
             metrics[key] = missing(key, 'unavailable', '官方表格未能安全識別：' + last_error)
-    # This URL must point to an OFFICIAL TAIFEX daily TXT; never guess its download route.
-    # Example template may contain {date} (YYYYMMDD). Set as GitHub Actions secret/env.
-    template = os.getenv('TAIFEX_VIX_TXT_URL_TEMPLATE', '').strip()
-    if not template or not template.startswith('https://'):
-        metrics['tw_vix'] = missing('tw_vix', 'not_connected', '尚未設定經驗證的期交所 TXT 自動下載網址 TAIFEX_VIX_TXT_URL_TEMPLATE')
-        return
-    last_error = 'no_data'
-    for offset in range(8):
-        day = (now - timedelta(days=offset)).date()
-        if day.weekday() >= 5:
-            continue
-        try:
-            url = template.replace('{date}', day.strftime('%Y%m%d'))
-            if not url.startswith('https://www.taifex.com.tw/'):
-                raise ValueError('vix_url_not_official')
-            req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urlopen(req, timeout=15) as response:
-                raw = response.read(400000)
-                try:
-                    body = raw.decode('utf-8-sig')
-                except UnicodeDecodeError:
-                    body = raw.decode('cp950')
-            vix = parse_vix_txt(body, expected_date=day)
-            metrics['tw_vix'] = {'label': '台灣VIX（最後一分鐘平均）', 'value': vix['value'], 'date': vix['date'], 'status': 'ok', 'source': 'TAIFEX official intraday TXT', 'frequency': 'official_after_close', 'note': '採官方 Last 1 min AVG；不等同盤中即時數值。'}
-            break
-        except Exception as exc:
-            last_error = type(exc).__name__ + ': ' + str(exc)[:70]
-    else:
-        metrics['tw_vix'] = missing('tw_vix', 'unavailable', '官方 VIX TXT 抓取或日期驗證失敗：' + last_error)
+    # TAIFEX publishes a monthly closing VIX TXT (YYYYMMnew.txt).
+    # Keep the official VIX and the 1-minute average as separate fields.
+    try:
+        from taifex_vix_parser import fetch_latest_vix
+        vix = fetch_latest_vix(now=now)
+        metrics['tw_vix'] = {
+            'label': '台灣VIX（臺指選擇權波動率指數）',
+            'value': vix['value'],
+            'close_1min_avg': vix['close_1min_avg'],
+            'date': vix['date'],
+            'status': 'ok',
+            'source': 'TAIFEX monthly closing VIX TXT',
+            'source_url': vix['source_url'],
+            'frequency': 'official_after_close',
+            'note': 'value 為官方臺指選擇權波動率指數；close_1min_avg 為收盤前1分鐘平均指數。非即時數據。',
+        }
+    except Exception as exc:
+        metrics['tw_vix'] = missing(
+            'tw_vix', 'unavailable',
+            'TAIFEX 月份 VIX TXT 下載或解析失敗：{}: {}'.format(type(exc).__name__, str(exc)[:120])
+        )
