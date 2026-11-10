@@ -528,4 +528,4 @@ from market_monitor import get_market_monitor
 
 @app.get("/api/market-monitor")
 def market_monitor_endpoint():
-    return get_market_monitor()
+    return read_market_monitor()
