@@ -19,7 +19,7 @@ main>section,main>.panel{min-width:0;max-width:100%}
 .v63-rule-label{display:block;color:#95abc6;font-size:12px;margin-bottom:4px}
 @media(max-width:900px){main{width:100%;margin-left:0;padding:16px}#v63-premarket{padding:14px!important}}
 .v51-table{min-width:1250px}.v51-table td{vertical-align:top}.v51-table td:last-child{min-width:230px;white-space:normal}.v51-details summary{cursor:pointer;color:#66ebc8}.v51-details[open]{min-width:260px}.v51-detailgrid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:12px}.v51-detailgrid>div{background:#172941;padding:9px;border-radius:8px}.v51-detailgrid p{margin:5px 0;font-size:12px;line-height:1.6}.v51-warning{padding:12px;background:#302b22;color:#ffd08a;border-radius:8px;font-size:13px}</style></head><body><aside><div class="brand">台股<span>智研 AI</span><small>TAIWAN STOCK INTELLIGENCE · V5</small></div><div id="nav"></div></aside><main><header class="top"><div><h1 id="pageTitle">美股與隔日台股觀察</h1><div class="muted">真實歷史日線 API · 非即時行情 · 僅供研究</div></div><span class="chip" id="server">檢查伺服器中…</span></header><div class="banner">⚠ 本站不是即時交易系統。歷史資料可能延遲、調整或錯誤；尚未驗證的勝率、隔日預測及當沖訊號一律不顯示。請勿直接依此下單。</div>
-<section id="section0"><div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel" id="v69-market-panel"><div class="row"><h2>AI 台股大盤預測｜歷史研究</h2><span class="chip">研究測試中</span></div>
+<section id="section0"><div class="panel" id="mm-panel"><div class="row"><h2>市場多空監控｜自動更新</h2><button type="button" id="mm-refresh">立即更新</button></div><p class="muted">每5分鐘檢查一次。行情為供應商延遲日線；盤後法人與融資尚未串接，未取得不補值。</p><div id="mm-status" class="status">等待資料…</div><div id="mm-cards" class="grid"></div><p class="muted" id="mm-warning"></p></div><div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel" id="v69-market-panel"><div class="row"><h2>AI 台股大盤預測｜歷史研究</h2><span class="chip">研究測試中</span></div>
 <p class="muted">歷史回測不等於明日預測。本區從 Supabase 讀取已保存的研究結果；正式盤前預測尚未啟用。</p>
 <div id="v69-model-status" class="status">正在讀取模型研究結果…</div>
 <div id="v69-model-metrics" class="grid"></div>
@@ -123,4 +123,27 @@ if(!items.length)meta.textContent+='｜無符合資料日期的候選股';
   load();
 })();
 </script>
-</body></html>
+<script>
+(function(){
+  const cards=document.getElementById('mm-cards'), status=document.getElementById('mm-status');
+  const warn=document.getElementById('mm-warning');
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function update(){
+    status.textContent='正在更新多空監控…';
+    try{
+      const res=await fetch('/api/market-monitor',{cache:'no-store'});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const data=await res.json();
+      cards.innerHTML=Object.values(data.metrics||{}).map(m=>{
+        const val=m.value==null?'未取得':Number(m.value).toLocaleString('zh-TW',{maximumFractionDigits:4});
+        return '<div class="metric"><div class="muted">'+esc(m.label)+'</div><div class="value">'+esc(val)+'</div><div class="muted">'+esc(m.date||'尚未串接')+' · '+esc(m.source||'')+'</div></div>';
+      }).join('');
+      const when=new Date(data.generated_at_taipei).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'});
+      status.textContent='伺服器更新：'+when+'｜已覆蓋權重 '+data.coverage_weight+'/100｜局部方向分數 '+(data.score??'—')+'（非預測機率）';
+      warn.textContent=data.warning||'';
+    }catch(e){status.textContent='資料更新失敗：'+e.message;}
+  }
+  document.getElementById('mm-refresh').addEventListener('click',update);
+  update();setInterval(()=>{if(!document.hidden)update()},300000);
+})();
+</script></body></html>
