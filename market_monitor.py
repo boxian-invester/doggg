@@ -11,6 +11,7 @@ import math
 import threading
 import time
 import yfinance as yf
+from market_monitor_v36 import update_official_v36
 
 TZ = ZoneInfo('Asia/Taipei')
 SYMBOLS = {
@@ -27,9 +28,9 @@ OFFICIAL = {
     'foreign_cash': ('外資現貨買賣超（上市）', 'TWSE'),
     'trust_cash': ('投信買賣超（上市）', 'TWSE'),
     'foreign_futures': ('外資台指期淨空單', 'TAIFEX'),
-    'margin': ('上市櫃融資餘額', 'TWSE/TPEx'),
+    'margin': ('上市融資餘額', 'TWSE'),
     'tw_vix': ('台灣VIX', 'TAIFEX'),
-    'breadth': ('台股市場廣度', 'TWSE/TPEx'),
+    'breadth': ('上市股票市場廣度', 'TWSE'),
 }
 _LOCK = threading.Lock()
 _CACHE = {'at': 0.0, 'result': None}
@@ -251,6 +252,7 @@ def get_market_monitor(force=False):
             metrics[key] = _missing(key)
         _official_cash(metrics)
         _official_foreign_futures(metrics)
+        update_official_v36(metrics, datetime.now(TZ), _missing)
         # Only explicitly defined comparable directions are scored.  The
         # full-weight scoring model is NOT ready until the official data exist.
         weighted = [('usdtwd', 15, False), ('nasdaq', 5, True),
@@ -273,7 +275,7 @@ def get_market_monitor(force=False):
             'score': score, 'coverage_weight': known, 'total_weight': 100,
             'score_label': '局部方向分數（非預測機率）',
             'official_cash_connected': all(metrics[k]['status'] == 'ok' for k in ('foreign_cash', 'trust_cash')),
-            'warning': '正式多空評分尚未啟用：融資、台灣VIX及市場廣度仍待可靠官方解析；期貨資料可能因官方連線失敗而缺漏；外資現貨資料不等同資金跨境流量。DXY 行情為第三方延遲指數報價。',
+            'warning': '正式多空評分尚未啟用：官方資料可能缺漏，部分解析器仍待線上驗證；期貨資料可能因官方連線失敗而缺漏；外資現貨資料不等同資金跨境流量。DXY 行情為第三方延遲指數報價。',
             'forecast_next_day': None, 'forecast_20d': None,
         }
         _CACHE.update(at=time.monotonic(), result=result)
