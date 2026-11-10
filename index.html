@@ -1,7 +1,15 @@
 <!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>台股智研 AI v5</title><style>
 :root{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans TC',sans-serif;color:#e9f1ff;background:#090f1d}*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button{cursor:pointer;border:1px solid #31445e;background:#1a3049;color:#e8f6ff;border-radius:9px;padding:10px 13px}button:hover{background:#274766}input,select{background:#101e31;border:1px solid #3a506d;border-radius:9px;color:#fff;padding:11px;max-width:100%}aside{position:fixed;width:245px;top:0;bottom:0;left:0;overflow:auto;background:#0c1728;border-right:1px solid #28374d;padding:22px 13px}.brand{font-size:23px;font-weight:850;padding:4px 10px 22px}.brand span{color:#39d5b0}.brand small{display:block;font-size:11px;color:#899bb5;margin-top:5px}.nav{display:block;width:100%;margin:3px 0;text-align:left;border:0;background:transparent;color:#b2c1d5;font-size:13px}.nav.active{background:#1c3b50;color:#66ebc8}.nav b{color:#6c92aa;margin-right:9px}main{margin-left:245px;padding:28px 30px;max-width:1700px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.top h1{margin:0;font-size:26px}.muted{color:#91a4be;font-size:13px;line-height:1.6}.banner{border:1px solid #445069;background:#1d273a;color:#ffd69a;padding:12px 15px;border-radius:11px;margin:20px 0;font-size:13px}.panel{background:#111e31;border:1px solid #293c55;border-radius:15px;padding:20px;margin:16px 0;min-width:0}.panel h2{font-size:19px;margin:0 0 10px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric{background:#172941;padding:14px;border-radius:11px;min-width:0}.metric .value{font-size:23px;font-weight:750;margin:7px 0;overflow-wrap:anywhere}.green{color:#46d4ac}.red{color:#ff858e}.warn{color:#ffd08a}.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.chart{width:100%;height:310px;display:block}.smallchart{height:140px}.chartwrap{overflow:hidden;background:#0d1a2c;border-radius:9px;margin-top:10px}.row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.hidden{display:none!important}.status{padding:8px 0;color:#a5b8cf;font-size:13px}.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}td,th{border-bottom:1px solid #28394f;padding:11px;text-align:left;white-space:nowrap}th{color:#94aac4;font-weight:500}tr[data-symbol]{cursor:pointer}tr[data-symbol]:hover{background:#20374b}.chip{border-radius:30px;background:#263951;padding:5px 10px;font-size:12px}.foot{color:#8c9fb9;font-size:12px;margin:25px 0}.placeholder{padding:22px;border:1px dashed #3c536d;border-radius:11px;color:#a8b9d1;line-height:1.8}a{color:#7bdbfa}#toast{color:#ffd08a}@media(max-width:900px){aside{position:static;width:auto;display:flex;gap:4px;overflow:auto;padding:12px;align-items:center}.brand{font-size:17px;white-space:nowrap;padding:5px}.brand small{display:none}.nav{white-space:nowrap;width:auto}main{margin:0;padding:16px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.grid{grid-template-columns:1fr 1fr}.metric .value{font-size:18px}.top h1{font-size:21px}}
 </style></head><body><aside><div class="brand">台股<span>智研 AI</span><small>TAIWAN STOCK INTELLIGENCE · V5</small></div><div id="nav"></div></aside><main><header class="top"><div><h1 id="pageTitle">美股與隔日台股觀察</h1><div class="muted">真實歷史日線 API · 非即時行情 · 僅供研究</div></div><span class="chip" id="server">檢查伺服器中…</span></header><div class="banner">⚠ 本站不是即時交易系統。歷史資料可能延遲、調整或錯誤；尚未驗證的勝率、隔日預測及當沖訊號一律不顯示。請勿直接依此下單。</div>
-<section id="section0"><div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel"><h2>隔日台股漲跌機率</h2><div class="placeholder">尚未建立可驗證的預測模型。未來將加入美股收盤、費半、VIX、台積電 ADR、匯率與台股歷史資料，並公布回測期間、樣本數及樣本外命中率。</div></div><div class="panel"><div class="row"><h2>v5 美股盤前觀測（非機率預測）</h2><button id="pmRun">更新美股盤前摘要</button></div><div id="pmStatus" class="status">按更新以取得美股最近一個交易日資料。</div><div id="pmOutput"></div></div></section>
+<section id="section0">
+<div class="panel" id="v43-dashboard">
+ <div class="row"><div><h2>V4.3｜台股市場多空評分</h2><div class="muted">紅色＝對台股偏多　綠色＝對台股偏空　白色＝中性／原始數值</div></div><button id="v43-refresh" type="button">更新監控畫面</button></div>
+ <div class="v43-score"><div id="v43-score" class="v43-score-number v43-neutral">—</div><div><div id="v43-sentiment" style="font-size:19px;font-weight:750">載入中…</div><div id="v43-meta" class="muted">從市場監控 API 讀取最近一次快照</div></div></div>
+ <div id="v43-cards" class="v43-grid"></div>
+ <p id="v43-status" class="muted">讀取中…</p>
+ <p class="muted">比較基準：行情漲跌使用資料來源提供的前一交易日變化；外資期貨與融資若只有5日／20日歷史變化，明確標註期間，不冒充昨日增減。官方盤後數據未更新時顯示原資料日期。顏色是呈現規則，非經回測的上漲機率。</p>
+</div>
+<div class="panel"><h2>美股主要指數與台股連動觀察</h2><p class="muted">顯示行情來源提供的最新歷史日線。隔日台股漲跌機率需要獨立訓練及樣本外驗證。</p><div class="grid" id="usCards"><div class="status">載入中…</div></div><div class="status" id="usStatus"></div><button id="refreshUs">重新整理美股</button></div><div class="panel"><h2>隔日台股漲跌機率</h2><div class="placeholder">尚未建立可驗證的預測模型。未來將加入美股收盤、費半、VIX、台積電 ADR、匯率與台股歷史資料，並公布回測期間、樣本數及樣本外命中率。</div></div><div class="panel"><div class="row"><h2>v5 美股盤前觀測（非機率預測）</h2><button id="pmRun">更新美股盤前摘要</button></div><div id="pmStatus" class="status">按更新以取得美股最近一個交易日資料。</div><div id="pmOutput"></div></div></section>
 <section id="section1" class="hidden"><div class="panel"><h2>盤前當沖候選觀察</h2><p class="muted">目前以固定 10 檔股票的歷史日線排序，非全市場掃描，也不是當日盤中買賣建議。</p><div id="watchA" class="status">載入中…</div></div><div class="panel"><h2>當沖進場、停損與勝率</h2><div class="placeholder">尚未連接授權盤中行情與歷史分鐘 K 線，因此不產生假設的當沖進場價、停損價或勝率。需在盤前建立條件，開盤後確認量價訊號。</div></div><div class="panel"><div class="row"><h2>v5 研究清單掃描（20檔，非即時當沖）</h2><button id="scanRun">掃描 20 檔</button></div><div id="scanStatus" class="status">根據歷史日線排序，不提供未驗證勝率。</div><div id="scanOutput"></div></div></section>
 <section id="section2" class="hidden"><div class="panel"><h2>每日五大交易機會觀察</h2><p class="muted">僅按歷史日線突破與量比排列，並非高勝率交易推薦。</p><div id="watchB" class="status">載入中…</div></div><div class="panel"><div class="row"><h2>v5 規則評分前五名</h2><button id="opRun">更新前五名</button></div><div id="opStatus" class="status">評分不是勝率，不能作為當沖下單訊號。</div><div id="opOutput"></div></div></section>
 <section id="section3" class="hidden"><div class="panel"><div class="row"><div><h2>個股歷史技術分析</h2><div class="muted">輸入台股代號；圖表資料由後端 API 提供</div></div><div class="controls"><input id="symbol" value="2330" maxlength="6" inputmode="numeric" aria-label="股票代號"><select id="period"><option value="6mo">6 個月</option><option value="1y" selected>1 年</option><option value="2y">2 年</option><option value="5y">5 年</option></select><button id="query">查詢個股</button></div></div><div class="status" id="stockStatus"></div><div class="row"><h2 id="stockName">2330</h2><span class="chip" id="stockDate">等待資料</span></div><div class="grid" id="stockMetrics"></div></div><div class="panel"><h2>日線 K 線 · MA20 / MA60</h2><div class="chartwrap"><canvas class="chart" id="priceChart"></canvas></div><p class="muted">圖表使用已調整歷史價格；價格區間不應直接當作未調整的委託價。</p></div><div class="panel"><h2>成交量</h2><div class="chartwrap"><canvas class="chart smallchart" id="volumeChart"></canvas></div></div><div class="panel"><h2>KD 指標</h2><div class="chartwrap"><canvas class="chart smallchart" id="kdChart"></canvas></div></div><div class="panel"><h2>MACD 柱狀圖</h2><div class="chartwrap"><canvas class="chart smallchart" id="macdChart"></canvas></div></div><div class="panel"><h2>支撐、壓力與交易判斷</h2><div id="interpretation" class="placeholder">等待查詢…</div></div></section>
@@ -50,6 +58,121 @@ const rows=(d.items||[]).map(x=>'<tr>'+[x.symbol,x.name,x.score,x.reference_adju
 out.innerHTML='<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>'+['代號','名稱','技術分數','調整後參考收盤','條件式進場','條件式停損'].map(x=>'<th style="padding:9px;text-align:left">'+x+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table>';
 if(!rows)meta.textContent+='｜無符合資料日期的候選股';
 }catch(e){meta.textContent='盤前報告尚未建立或暫時無法讀取；請先完成 SQL 建表及盤前 Workflow。';}
+})();
+</script>
+
+<style>
+#v43-dashboard{border-color:#3a536c}
+#v43-dashboard .v43-score{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:14px 0}
+#v43-dashboard .v43-score-number{font-size:52px;font-weight:850;line-height:1}
+#v43-dashboard .v43-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+#v43-dashboard .v43-item{background:#172941;border:1px solid #29405a;border-radius:11px;padding:14px;min-width:0}
+#v43-dashboard .v43-name{font-size:12px;color:#9eb1c9}
+#v43-dashboard .v43-value{font-size:21px;font-weight:750;margin:8px 0;overflow-wrap:anywhere}
+#v43-dashboard .v43-change{font-size:13px;font-weight:700;min-height:18px}
+#v43-dashboard .v43-red{color:#ff858e}
+#v43-dashboard .v43-green{color:#46d4ac}
+#v43-dashboard .v43-neutral{color:#e9f1ff}
+#v43-dashboard .v43-sub{font-size:11px;color:#91a4be;margin-top:8px;line-height:1.5}
+@media(max-width:1100px){#v43-dashboard .v43-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){#v43-dashboard .v43-value{font-size:17px}#v43-dashboard .v43-score-number{font-size:42px}}
+</style>
+
+<script>
+(function(){
+'use strict';
+const byId=id=>document.getElementById(id);
+const esc=v=>String(v==null?'—':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
+const fmt=(v,d=2)=>n(v)==null?'—':v.toLocaleString('zh-TW',{maximumFractionDigits:d,minimumFractionDigits:d});
+const signed=(v,d=2)=>n(v)==null?'—':(v>0?'+':'')+fmt(v,d);
+const cls=direction=>direction>0?'v43-red':direction<0?'v43-green':'v43-neutral';
+const metric=(m,k)=>m&&m[k]&&typeof m[k]==='object'?m[k]:{};
+const date=m=>m.date?'資料日：'+m.date:'資料日：未提供';
+const pct=m=>n(m.change_pct);
+const item=(label,value,change,dir,sub)=>`<div class="v43-item"><div class="v43-name">${esc(label)}</div><div class="v43-value v43-neutral">${esc(value)}</div><div class="v43-change ${cls(dir)}">${esc(change)}</div><div class="v43-sub">${esc(sub)}</div></div>`;
+function priceCard(label,m,digits=2){
+ const v=n(m.value),p=pct(m);
+ return item(label,fmt(v,digits),p==null?'未提供前一交易日漲跌':`${p>0?'▲':p<0?'▼':'—'} ${signed(p)}%`,p,date(m));
+}
+function fxCard(m){
+ const p=pct(m); // USD/TWD 上漲 = 新台幣貶值
+ return item('美元／新台幣 USD/TWD',fmt(n(m.value),3),p==null?'匯率日變化未提供':`新台幣${p<0?'升值':p>0?'貶值':'持平'}｜USD/TWD ${signed(p)}%`,p==null?0:-p,date(m));
+}
+function flowCard(label,m){
+ const v=n(m.value);return item(label,v==null?'—':`${signed(v)} 億元`,v==null?'未取得買賣超':v>0?'買超':v<0?'賣超':'買賣超持平',v,date(m));
+}
+function futuresCard(m,detail){
+ const raw=n(m.net_oi)??n(m.value),shorts=raw==null?null:Math.max(0,-raw);
+ const delta=n(detail.change_5d),d20=n(detail.change_20d);
+ // net_oi 變大表示淨空部位減少；展示「空單變化」需反向
+ const shortChange=delta==null?null:-delta;
+ return item('外資台指期淨空單',shorts==null?'—':fmt(shorts,0)+' 口',
+ shortChange==null?'前一日空單增減未提供':`${signed(shortChange,0)} 口空單（近5交易日）`,
+ shortChange==null?0:-shortChange,
+ `${date(m)}｜${raw!=null&&raw>=0?'目前非淨空單；顯示0口': '總量白字'}${d20==null?'':'｜20日淨部位變化 '+signed(d20,0)+' 口'}`);
+}
+function marginCard(m,detail){
+ const p=n(detail.change_5d_pct),p20=n(detail.change_20d_pct);
+ return item('上市融資餘額',n(m.value)==null?'—':fmt(m.value,3)+' 億',
+ p==null?'前一日融資變化未提供':`${signed(p)}%（近5交易日）`,
+ p==null?0:-p,
+ `${date(m)}${p20==null?'':'｜20日 '+signed(p20)+'%'}｜融資下降紅字僅為顯示慣例`);
+}
+function vixCard(label,m,detail){
+ const delta=n(detail&&detail.change_5d),p=pct(m);
+ const v=delta!=null?delta:p;
+ return item(label,fmt(n(m.value)),v==null?'未提供變化':delta!=null?`${signed(delta)}（近5交易日）`:`${signed(p)}%（前一交易日）`,-v,date(m));
+}
+function macroCard(label,m,type){
+ const p=pct(m);
+ const hint=type==='dxy'?'美元走弱通常有利風險資產；仍須看市場背景':'殖利率溫和下降通常有利估值；恐慌性下跌不一定利多';
+ return item(label,fmt(n(m.value),type==='yield'?3:2),
+ p==null?'前一交易日變化未提供':`${signed(p)}%（前一交易日；條件式判斷）`,
+ 0,`${date(m)}｜${hint}｜不自動以單日方向判定紅綠`);
+}
+async function load(){
+ byId('v43-status').textContent='正在讀取市場監控快照…';
+ try{
+ const r=await fetch('/api/market-monitor',{cache:'no-store',headers:{Accept:'application/json'}});
+ if(!r.ok)throw new Error('HTTP '+r.status);
+ const d=await r.json(),m=d.metrics||{},details=d.score_details||{};
+ const score=n(d.score), sentiment=String(d.sentiment||'未判定');
+ byId('v43-score').textContent=score==null?'—':fmt(score,1)+'/100';
+ byId('v43-score').className='v43-score-number '+(score==null?'v43-neutral':score>=60?'v43-red':score<=40?'v43-green':'v43-neutral');
+ byId('v43-sentiment').textContent=sentiment;
+ byId('v43-sentiment').className=score==null?'v43-neutral':score>=60?'v43-red':score<=40?'v43-green':'v43-neutral';
+ const saved=d.snapshot_saved_at||d.generated_at_taipei||'—';
+ byId('v43-meta').textContent=`資料快照：${saved}｜快照年齡：${n(d.snapshot_age_minutes)==null?'—':fmt(d.snapshot_age_minutes,0)+' 分鐘'}｜模型：${d.model_version||'—'}`;
+ const cards=[
+ priceCard('台灣加權指數',metric(m,'twii')),
+ fxCard(metric(m,'usdtwd')),
+ flowCard('外資現貨買賣超',metric(m,'foreign_cash')),
+ futuresCard(metric(m,'foreign_futures'),details.foreign_futures||{}),
+ marginCard(metric(m,'margin'),details.margin||{}),
+ vixCard('台灣 VIX',metric(m,'tw_vix'),details.tw_vix||{}),
+ vixCard('美國 VIX',metric(m,'us_vix'),null),
+ priceCard('費城半導體 SOX',metric(m,'sox')),
+ priceCard('NASDAQ',metric(m,'nasdaq')),
+ priceCard('S&P 500',metric(m,'sp500')),
+ macroCard('美元指數 DXY',metric(m,'dxy_proxy'),'dxy'),
+ macroCard('美國10年公債殖利率',metric(m,'us10y'),'yield'),
+ flowCard('投信現貨買賣超',metric(m,'trust_cash'))
+ ];
+ const b=metric(m,'breadth'),up=n(b.up),down=n(b.down);
+ cards.push(item('台股漲跌家數',up==null||down==null?'—':`${fmt(up,0)} 漲 / ${fmt(down,0)} 跌`,
+ up==null||down==null?'資料不足':up>down?'上漲家數占優':up<down?'下跌家數占優':'漲跌家數相同',
+ up==null||down==null?0:up-down,date(b)));
+ byId('v43-cards').innerHTML=cards.join('');
+ byId('v43-status').textContent=`權重覆蓋：${d.coverage_weight??'—'} / ${d.total_weight??100}。資料來源包含盤後與延遲日線；請留意各卡片資料日期。`;
+ }catch(e){
+ byId('v43-score').textContent='—';
+ byId('v43-cards').innerHTML='';
+ byId('v43-status').textContent='讀取失敗：'+e.message+'。請確認 /api/market-monitor 是否正常。';
+ }
+}
+byId('v43-refresh').addEventListener('click',load);
+load();
 })();
 </script>
 </body></html>
