@@ -19,9 +19,10 @@ TICKERS = {
 }
 LOG = logging.getLogger("market_backfill")
 
-def fetch(ticker, years):
+def fetch(ticker, years, mode="backfill"):
     # Extra calendar days account for weekends; avoid look-ahead or synthetic rows.
-    start = (datetime.now(timezone.utc).date() - timedelta(days=round(365.25 * years + 10))).isoformat()
+    lookback_days = round(365.25 * years + 10) if mode == "backfill" else 21
+    start = (datetime.now(timezone.utc).date() - timedelta(days=lookback_days)).isoformat()
     df = yf.Ticker(ticker).history(start=start, interval="1d", auto_adjust=True)
     if df.empty:
         raise RuntimeError(f"No rows from source: {ticker}")
@@ -34,11 +35,12 @@ def fetch(ticker, years):
         volume = row["Volume"]
         v = int(volume) if pd.notna(volume) and float(volume) >= 0 else 0
         rows.append((ticker, timestamp.date(), o, h, l, c, v))
-    if len(rows) < 500:
-        raise RuntimeError(f"Only {len(rows)} valid rows for {ticker}; refusing incomplete backfill")
+    minimum = 500 if mode == "backfill" else 1
+    if len(rows) < minimum:
+        raise RuntimeError(f"Only {len(rows)} valid rows for {ticker}; expected at least {minimum}")
     return rows
 
-def run(years):
+def run(years, mode="backfill"):
     url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL secret is missing")
@@ -51,7 +53,7 @@ def run(years):
     failed = []
     for ticker in TICKERS:
         try:
-            rows = fetch(ticker, years)
+            rows = fetch(ticker, years, mode)
             with psycopg.connect(url, connect_timeout=20) as conn:
                 with conn.cursor() as cur:
                     # Bounded chunks and transactional per-ticker commits.
@@ -77,6 +79,7 @@ def run(years):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--years", type=int, default=5, choices=[3, 5])
+    parser.add_argument("--mode", choices=["backfill", "daily"], default="backfill")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    run(args.years)
+    run(args.years, args.mode)
