@@ -521,3 +521,11 @@ def v69_market_model():
         raise
     except Exception:
         raise HTTPException(503, 'AI 大盤研究資料暫時無法讀取，請確認 market_model_reports 資料表')
+
+
+# Market monitor add-on: isolated endpoint, preserves existing routes.
+from market_monitor import get_market_monitor
+
+@app.get("/api/market-monitor")
+def market_monitor_endpoint():
+    return get_market_monitor()
