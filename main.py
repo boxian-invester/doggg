@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from market_monitor_store import read_market_monitor
 import math
 import re
 import time
