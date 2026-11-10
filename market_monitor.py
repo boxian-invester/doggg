@@ -20,7 +20,7 @@ SYMBOLS = {
     'sox': ('費城半導體', '^SOX'),
     'sp500': ('S&P 500', '^GSPC'),
     'us_vix': ('美國VIX', '^VIX'),
-    'dxy_proxy': ('美元指數期貨（非DXY現貨）', 'DX=F'),
+    'dxy_proxy': ('美元指數 DXY（指數代理行情）', 'DX-Y.NYB'),
     'us10y': ('美國10年期殖利率指標', '^TNX'),
 }
 OFFICIAL = {
@@ -73,6 +73,49 @@ def _number(raw):
     return float(s)
 
 
+def _normalize_name(value):
+    """Normalize exchange row labels without conflating foreign subcategories."""
+    import unicodedata
+    return ''.join(unicodedata.normalize('NFKC', str(value)).split()).replace('：', ':')
+
+
+def _parse_twse_cash(payload):
+    """Return only explicitly identified TWSE institutional net cash values in 億元.
+
+    The official feed may contain a foreign aggregate and component rows;
+    prefer an explicit aggregate, never sum overlapping rows.
+    """
+    if str(payload.get('stat', '')).strip() != 'OK':
+        return None
+    fields = [_normalize_name(f) for f in payload.get('fields', [])]
+    name_i = next((i for i, f in enumerate(fields) if '單位名稱' in f or '類別' in f), None)
+    net_i = next((i for i, f in enumerate(fields) if '買賣差額' in f or '買賣超' in f), None)
+    if name_i is None or net_i is None:
+        raise ValueError('twse_schema_unrecognized')
+    foreign_candidates = []
+    found = {}
+    for row in payload.get('data') or []:
+        if not isinstance(row, (list, tuple)) or len(row) <= max(name_i, net_i):
+            continue
+        name = _normalize_name(row[name_i])
+        if name.startswith('投信'):
+            found['trust_cash'] = _number(row[net_i]) / 1e8
+        elif name.startswith(('外資及陸資', '外資')):
+            if '自營商' in name and '不含' not in name and '不包括' not in name:
+                continue
+            # Prefer explicit total if present; otherwise use the ex-proprietary
+            # institutional line and retain its scope in the display label.
+            priority = 2 if ('合計' in name or '總計' in name) else 1 if ('不含' in name or '不包括' in name) else 0
+            foreign_candidates.append((priority, name, _number(row[net_i]) / 1e8))
+    if foreign_candidates:
+        foreign_candidates.sort(key=lambda x: x[0], reverse=True)
+        found['foreign_cash'] = foreign_candidates[0][2]
+        found['_foreign_label'] = foreign_candidates[0][1]
+    if not any(k in found for k in ('foreign_cash', 'trust_cash')):
+        raise ValueError('twse_rows_unrecognized')
+    return found
+
+
 def _twse_institution_day(day):
     """Parse TWSE BFI82U only when field labels can be identified unambiguously.
 
@@ -86,24 +129,7 @@ def _twse_institution_day(day):
         payload = json.load(resp)
     if str(payload.get('stat', '')).strip() != 'OK':
         return None
-    fields = [str(f).replace('\n', '').replace(' ', '') for f in payload.get('fields', [])]
-    rows = payload.get('data') or []
-    name_i = next((i for i, x in enumerate(fields) if '單位名稱' in x), None)
-    net_i = next((i for i, x in enumerate(fields) if '買賣差額' in x), None)
-    if name_i is None or net_i is None:
-        raise ValueError('twse_schema_unrecognized')
-    found = {}
-    for row in rows:
-        if len(row) <= max(name_i, net_i):
-            continue
-        name = str(row[name_i]).replace(' ', '').replace('　', '')
-        if name.startswith('外資及陸資') and '自營商' not in name:
-            found['foreign_cash'] = _number(row[net_i]) / 100000000
-        elif name.startswith('投信'):
-            found['trust_cash'] = _number(row[net_i]) / 100000000
-    if not found:
-        raise ValueError('twse_rows_unrecognized')
-    return found
+    return _parse_twse_cash(payload)
 
 
 def _official_cash(metrics):
@@ -126,7 +152,7 @@ def _official_cash(metrics):
                                     'date': day.isoformat(), 'status': 'ok',
                                     'source': 'TWSE BFI82U (上市)',
                                     'frequency': 'official_after_close',
-                                    'note': '僅上市市場；正數為買超，負數為賣超。'}
+                                    'note': ('僅上市市場；正數為買超，負數為賣超。' + (' 外資口徑：' + result['_foreign_label'] if key == 'foreign_cash' and result.get('_foreign_label') else ''))}
             return
         except Exception as exc:
             last_error = type(exc).__name__
@@ -165,7 +191,7 @@ def get_market_monitor(force=False):
             'score': score, 'coverage_weight': known, 'total_weight': 100,
             'score_label': '局部方向分數（非預測機率）',
             'official_cash_connected': all(metrics[k]['status'] == 'ok' for k in ('foreign_cash', 'trust_cash')),
-            'warning': '正式多空評分尚未啟用：期貨淨部位、融資、台灣VIX及市場廣度仍待可靠官方解析；外資現貨資料不等同資金跨境流量。',
+            'warning': '正式多空評分尚未啟用：期貨淨部位、融資、台灣VIX及市場廣度仍待可靠官方解析；外資現貨資料不等同資金跨境流量。DXY 行情為第三方延遲指數報價。',
             'forecast_next_day': None, 'forecast_20d': None,
         }
         _CACHE.update(at=time.monotonic(), result=result)
